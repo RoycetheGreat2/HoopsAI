@@ -1,0 +1,263 @@
+.matchup-card {
+  position: relative;
+  background: linear-gradient(180deg, #1e2433 0%, #161b26 48%, #12161f 100%);
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  border-left: 3px solid var(--accent-card);
+  padding: 1.05rem 1.1rem 1.2rem;
+  overflow: hidden;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.35);
+  transition:
+    transform 0.28s ease,
+    border-color 0.28s ease,
+    box-shadow 0.28s ease;
+}
+
+.matchup-card:hover {
+  transform: translateY(-3px);
+  border-color: var(--border-bright);
+  box-shadow:
+    0 14px 36px rgba(0, 0, 0, 0.45),
+    0 0 0 1px rgba(196, 163, 90, 0.12);
+}
+
+.matchup-card--enter {
+  animation: card-rise 0.6s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@keyframes card-rise {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.matchup-card__result-badge {
+  position: absolute;
+  top: 0.55rem;
+  right: 0.55rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.28rem 0.6rem;
+  border-radius: 999px;
+  font-size: 0.68rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  z-index: 2;
+}
+
+.matchup-card__result-badge--correct {
+  color: #ecfdf5;
+  background: linear-gradient(
+    135deg,
+    rgba(52, 211, 153, 0.35),
+    rgba(16, 185, 129, 0.25)
+  );
+  border: 1px solid rgba(52, 211, 153, 0.75);
+  box-shadow:
+    0 0 20px rgba(52, 211, 153, 0.35),
+    inset 0 1px 0 rgba(255, 255, 255, 0.12);
+}
+
+.matchup-card__result-badge--incorrect {
+  color: var(--danger-soft);
+  background: var(--danger-soft-bg);
+  border: 1px solid rgba(180, 100, 100, 0.35);
+  font-weight: 700;
+}
+
+.matchup-card__result-icon {
+  font-size: 0.82rem;
+  line-height: 1;
+}
+
+.matchup-card__final-score {
+  text-align: center;
+  font-family: var(--mono);
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: var(--heading);
+  margin: 0 0 0.65rem;
+}
+
+.matchup-card__tip {
+  text-align: center;
+  font-size: 0.78rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+  margin: 0 0 0.65rem;
+}
+
+.matchup-card__teams {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.75rem;
+}
+
+.matchup-card__team-block {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.35rem;
+  min-width: 88px;
+  padding: 0.4rem 0.55rem;
+  border-radius: 12px;
+  transition:
+    background 0.25s ease,
+    box-shadow 0.25s ease,
+    transform 0.25s ease,
+    opacity 0.25s ease;
+}
+
+.matchup-card__team-block--winner {
+  background: rgba(30, 35, 50, 0.85);
+  box-shadow:
+    0 0 0 1px rgba(196, 163, 90, 0.35),
+    0 0 28px var(--accent-winner-glow),
+    0 6px 24px rgba(0, 0, 0, 0.35);
+  transform: scale(1.04);
+}
+
+.matchup-card__team-block--dim {
+  opacity: 0.68;
+}
+
+.matchup-card__logo-wrap {
+  width: 56px;
+  height: 56px;
+  border-radius: 14px;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.matchup-card__logo {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.matchup-card__logo-placeholder {
+  font-size: 0.7rem;
+  font-weight: 700;
+  color: var(--text-muted);
+  text-align: center;
+  line-height: 1.1;
+  padding: 4px;
+}
+
+.matchup-card__abbr {
+  font-family: var(--mono);
+  font-size: 1rem;
+  font-weight: 700;
+  color: var(--heading);
+}
+
+.matchup-card__team-block--winner .matchup-card__abbr {
+  color: #f5e6c3;
+}
+
+.matchup-card__at {
+  font-size: 1.2rem;
+  font-weight: 800;
+  color: var(--text-muted);
+  padding: 0 0.12rem;
+  align-self: flex-start;
+  margin-top: 1.2rem;
+}
+
+.matchup-card__probs {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  font-size: 0.9rem;
+  margin-bottom: 0.55rem;
+}
+
+.matchup-card__prob-col {
+  flex: 1;
+}
+
+.matchup-card__prob-col--away {
+  text-align: left;
+}
+
+.matchup-card__prob-col--home {
+  text-align: right;
+}
+
+.matchup-card__prob-label {
+  display: block;
+  font-size: 0.65rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-muted);
+  margin-bottom: 0.15rem;
+}
+
+.matchup-card__prob-value {
+  font-family: var(--mono);
+  font-size: 1.08rem;
+  color: var(--heading);
+}
+
+.matchup-card__prob-col--winner .matchup-card__prob-value {
+  font-weight: 800;
+  color: #f5e6c3;
+}
+
+.matchup-card__bar {
+  display: flex;
+  height: 12px;
+  border-radius: 999px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  background: rgba(0, 0, 0, 0.35);
+}
+
+.matchup-card__bar-away {
+  background: linear-gradient(
+    90deg,
+    var(--bar-away-a),
+    var(--bar-away-b)
+  );
+  transition: width 0.85s cubic-bezier(0.22, 1, 0.36, 1);
+  min-width: 0;
+}
+
+.matchup-card__bar-home {
+  background: linear-gradient(
+    90deg,
+    var(--bar-home-a),
+    var(--bar-home-b)
+  );
+  transition: width 0.85s cubic-bezier(0.22, 1, 0.36, 1);
+  min-width: 0;
+}
+
+.matchup-card__pick {
+  margin-top: 0.8rem;
+  text-align: center;
+  font-size: 0.82rem;
+  color: var(--text-muted);
+}
+
+.matchup-card__pick strong {
+  color: #f5e6c3;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  text-shadow: 0 0 18px rgba(196, 163, 90, 0.35);
+}
