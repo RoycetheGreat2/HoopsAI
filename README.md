@@ -1,4 +1,4 @@
-# NBA Win Predictor 🏀
+# HoopsAI - NBA Win Percentage Predictor
 
 > ⚠️ **Work in Progress** — This project is still actively being developed. Features, accuracy, and structure are subject to change.
 
