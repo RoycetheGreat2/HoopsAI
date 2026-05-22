@@ -58,9 +58,9 @@ def main() -> None:
         print("RENDER_API_KEY not set.")
         print("\nManual deploy (recommended):")
         print(f"  1. Open: {BLUEPRINT_URL}")
-        print("  2. Apply blueprint → deploy hoopsai-api first")
-        print("  3. Set VITE_API_URL on hoopsai-web to the API URL → redeploy web")
-        print("  4. Set CORS_ORIGINS on hoopsai-api to the static site URL → redeploy API")
+        print("  2. Apply blueprint, deploy hoopsai-api first")
+        print("  3. Set VITE_API_URL on hoopsai-web to the API URL, redeploy web")
+        print("  4. Set CORS_ORIGINS on hoopsai-api to the static site URL, redeploy API")
         print("\nSee README.md — Deploy on Render or Railway")
         sys.exit(0)
 
