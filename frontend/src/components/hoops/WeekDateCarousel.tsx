@@ -31,6 +31,8 @@ interface WeekDateCarouselProps {
   onDateChange: (date: string) => void;
   viewWeekStart: string;
   onViewWeekStartChange: (start: string) => void;
+  /** Last selectable day (inclusive), e.g. today + 6 */
+  maxSelectableDate: string;
 }
 
 function toYmd(d: Date): string {
@@ -47,13 +49,14 @@ export function WeekDateCarousel({
   onDateChange,
   viewWeekStart,
   onViewWeekStartChange,
+  maxSelectableDate,
 }: WeekDateCarouselProps) {
   const [pickerOpen, setPickerOpen] = useState(false);
   const pickerRef = useRef<HTMLDivElement>(null);
   const today = localYmd();
 
   const anchorDate = parseYmd(
-    clampYmd(viewWeekStart, TRACKING_SINCE, addDaysYmd(today, 6))
+    clampYmd(viewWeekStart, TRACKING_SINCE, maxSelectableDate)
   );
   const pickerYear = anchorDate.getFullYear();
   const pickerMonth = anchorDate.getMonth();
@@ -74,20 +77,21 @@ export function WeekDateCarousel({
     year: 'numeric',
   });
 
+  const maxWeekStart = addDaysYmd(maxSelectableDate, -6);
   const canGoPrev = compareYmd(addDaysYmd(viewWeekStart, -7), TRACKING_SINCE) >= 0;
-  const canGoNext = compareYmd(viewWeekStart, today) < 0;
+  const canGoNext = compareYmd(addDaysYmd(viewWeekStart, 7), maxWeekStart) <= 0;
 
   const yearOptions = useMemo(() => {
     const minY = parseYmd(TRACKING_SINCE).getFullYear();
-    const maxY = parseYmd(today).getFullYear();
+    const maxY = parseYmd(maxSelectableDate).getFullYear();
     const years: number[] = [];
     for (let y = minY; y <= maxY; y++) years.push(y);
     return years;
-  }, [today]);
+  }, [maxSelectableDate]);
 
   const availableMonths = useMemo(() => {
     const min = parseYmd(TRACKING_SINCE);
-    const max = parseYmd(today);
+    const max = parseYmd(maxSelectableDate);
     const months: number[] = [];
     for (let m = 0; m < 12; m++) {
       const probe = new Date(pickerYear, m, 15);
@@ -96,7 +100,7 @@ export function WeekDateCarousel({
       months.push(m);
     }
     return months;
-  }, [pickerYear, today]);
+  }, [pickerYear, maxSelectableDate]);
 
   useEffect(() => {
     function onDocClick(e: MouseEvent) {
@@ -110,12 +114,14 @@ export function WeekDateCarousel({
 
   function shiftWeek(delta: number) {
     const next = addDaysYmd(viewWeekStart, delta * 7);
-    const clamped = clampYmd(next, TRACKING_SINCE, addDaysYmd(today, 6));
+    const clamped = clampYmd(next, TRACKING_SINCE, maxWeekStart);
     onViewWeekStartChange(clamped);
     if (compareYmd(selectedDate, clamped) < 0) {
-      onDateChange(clamped);
+      onDateChange(clampYmd(clamped, TRACKING_SINCE, maxSelectableDate));
     } else if (compareYmd(selectedDate, addDaysYmd(clamped, 6)) > 0) {
-      onDateChange(addDaysYmd(clamped, 6));
+      onDateChange(
+        clampYmd(addDaysYmd(clamped, 6), TRACKING_SINCE, maxSelectableDate)
+      );
     }
   }
 
@@ -129,22 +135,26 @@ export function WeekDateCarousel({
       ),
       -1
     );
-    if (compareYmd(today, start) >= 0 && compareYmd(today, monthEnd) <= 0) {
+    if (
+      compareYmd(today, start) >= 0 &&
+      compareYmd(today, monthEnd) <= 0
+    ) {
       start = clampYmd(
         addDaysYmd(today, -((parseYmd(today).getDay() + 7) % 7)),
         TRACKING_SINCE,
-        today
+        maxWeekStart
       );
     }
-    start = clampYmd(start, TRACKING_SINCE, addDaysYmd(today, 6));
+    start = clampYmd(start, TRACKING_SINCE, maxWeekStart);
     onViewWeekStartChange(start);
     const pick =
       compareYmd(selectedDate, start) >= 0 &&
       compareYmd(selectedDate, addDaysYmd(start, 6)) <= 0
         ? selectedDate
-        : compareYmd(today, start) >= 0 && compareYmd(today, addDaysYmd(start, 6)) <= 0
-          ? today
-          : start;
+        : compareYmd(today, start) >= 0 &&
+            compareYmd(today, addDaysYmd(start, 6)) <= 0
+          ? clampYmd(today, TRACKING_SINCE, maxSelectableDate)
+          : clampYmd(start, TRACKING_SINCE, maxSelectableDate);
     onDateChange(pick);
     setPickerOpen(false);
   }
@@ -217,7 +227,9 @@ export function WeekDateCarousel({
           <div className="flex gap-2 overflow-x-auto pb-1">
             {weekDates.map((date) => {
               const dateStr = toYmd(date);
-              if (compareYmd(dateStr, TRACKING_SINCE) < 0) return null;
+              const isBeforeMin = compareYmd(dateStr, TRACKING_SINCE) < 0;
+              const isAfterMax = compareYmd(dateStr, maxSelectableDate) > 0;
+              const isDisabled = isBeforeMin || isAfterMax;
               const isSelected = dateStr === selectedDate;
               const day = date.getDate();
               const weekday = DAY_LABELS[date.getDay()];
@@ -226,11 +238,17 @@ export function WeekDateCarousel({
                 <button
                   key={dateStr}
                   type="button"
-                  onClick={() => onDateChange(dateStr)}
+                  disabled={isDisabled}
+                  onClick={() => {
+                    if (isDisabled) return;
+                    onDateChange(dateStr);
+                  }}
                   className={`flex min-w-16 flex-col items-center rounded-lg p-3 transition-colors ${
-                    isSelected
-                      ? 'bg-primary text-white'
-                      : 'bg-muted text-foreground hover:bg-muted/80'
+                    isDisabled
+                      ? 'cursor-not-allowed opacity-35 bg-muted/50 text-muted-foreground'
+                      : isSelected
+                        ? 'bg-primary text-white'
+                        : 'bg-muted text-foreground hover:bg-muted/80'
                   }`}
                 >
                   <span className="text-xs font-medium opacity-80">{weekday}</span>

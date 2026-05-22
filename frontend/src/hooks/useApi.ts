@@ -318,9 +318,9 @@ export function compareYmd(a: string, b: string): number {
   return a.localeCompare(b);
 }
 
-/** Clamp date to tracking window [since, today]. */
-export function clampYmd(ymd: string, since: string, today?: string): string {
-  const t = today ?? localYmd();
+/** Clamp date to [since, maxYmd] (maxYmd defaults to today). */
+export function clampYmd(ymd: string, since: string, maxYmd?: string): string {
+  const t = maxYmd ?? localYmd();
   if (compareYmd(ymd, since) < 0) return since;
   if (compareYmd(ymd, t) > 0) return t;
   return ymd;

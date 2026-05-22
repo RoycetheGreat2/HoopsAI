@@ -5,33 +5,38 @@ import { RightSidebar } from './components/hoops/RightSidebar';
 import { PerformancePanel } from './components/hoops/PerformancePanel';
 import {
   useWeeklyPredictions,
-  useHealth,
   buildGamesForDate,
   resolvedTimeZone,
   localYmd,
   clampYmd,
   compareYmd,
+  addDaysYmd,
 } from './hooks/useApi';
 import { TRACKING_SINCE } from './config';
 import { Loader2, AlertTriangle, RefreshCw } from 'lucide-react';
 
 const HERO_IMAGE = '/images/court-hero.jpg';
 
-function initialWeekStart(): string {
-  const today = localYmd();
-  return clampYmd(today, TRACKING_SINCE, today);
+function maxSelectableDate(today: string): string {
+  return addDaysYmd(today, 6);
+}
+
+function initialWeekStart(today: string): string {
+  const maxD = maxSelectableDate(today);
+  const anchor = compareYmd(today, TRACKING_SINCE) >= 0 ? today : TRACKING_SINCE;
+  return clampYmd(anchor, TRACKING_SINCE, maxD);
 }
 
 export default function App() {
   const today = localYmd();
-  const [viewWeekStart, setViewWeekStart] = useState(initialWeekStart);
+  const maxDate = maxSelectableDate(today);
+  const [viewWeekStart, setViewWeekStart] = useState(() => initialWeekStart(today));
   const [selectedDate, setSelectedDate] = useState(() =>
-    clampYmd(today, TRACKING_SINCE, today)
+    clampYmd(today, TRACKING_SINCE, maxDate)
   );
   const [activeTab, setActiveTab] = useState<'games' | 'statistics'>('games');
 
   const userTimeZone = useMemo(() => resolvedTimeZone(), []);
-  const { phase: apiPhase } = useHealth();
   const { loading, error, data: payload, retry } = useWeeklyPredictions(
     viewWeekStart
   );
@@ -42,7 +47,6 @@ export default function App() {
   );
 
   const allGames = [...finished, ...upcoming];
-  const apiOnline = apiPhase === 'ok' && !error;
 
   return (
     <main className="min-h-screen bg-[#F8F9FA]">
@@ -54,22 +58,6 @@ export default function App() {
         />
         <div className="absolute inset-0 bg-black/50" aria-hidden />
         <div className="absolute inset-0 flex flex-col items-center justify-center px-4 text-center">
-          <div
-            className={`mb-6 inline-flex items-center gap-2 rounded-full border px-4 py-2 backdrop-blur-sm ${
-              apiOnline
-                ? 'border-white/20 bg-white/10'
-                : 'border-amber-400/40 bg-amber-500/20'
-            }`}
-          >
-            <span
-              className={`h-2 w-2 rounded-full ${
-                apiOnline ? 'animate-pulse bg-green-400' : 'bg-amber-400'
-              }`}
-            />
-            <span className="text-sm font-medium text-white/90">
-              {apiOnline ? 'Live predictions active' : 'Start the API to load games'}
-            </span>
-          </div>
           <h1 className="text-5xl font-bold tracking-tight text-white drop-shadow-lg md:text-7xl lg:text-8xl">
             Predict the Game
           </h1>
@@ -83,8 +71,9 @@ export default function App() {
         <WeekDateCarousel
           selectedDate={selectedDate}
           onDateChange={(d) =>
-            setSelectedDate(clampYmd(d, TRACKING_SINCE, today))
+            setSelectedDate(clampYmd(d, TRACKING_SINCE, maxDate))
           }
+          maxSelectableDate={maxDate}
           viewWeekStart={viewWeekStart}
           onViewWeekStartChange={setViewWeekStart}
         />
