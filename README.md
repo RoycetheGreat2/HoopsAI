@@ -1,5 +1,7 @@
 # HoopsAI - NBA Win Percentage Predictor
 
+[Live Demo](https://hoopsai-web.onrender.com/)
+
 > **Work in Progress** — This project is still actively being developed. Features, accuracy, and structure are subject to change.
 
 A machine learning pipeline and web application that predicts NBA game outcomes. It scrapes live and historical data, engineers over 40 predictive features, and serves real-time win probability predictions through a React frontend powered by a Flask REST API.
@@ -28,4 +30,4 @@ Basketball-Reference (scraping)
   frontend/  (React + Vite)
 ```
 
-**Live predictions do not retrain the model.** The API loads a fixed `nba_model.pkl` and uses the latest row per team from `data/nba_games_features.csv` for rolling stats and ELO.
+
