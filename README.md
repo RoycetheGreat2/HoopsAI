@@ -99,9 +99,54 @@ gunicorn app:app --bind 0.0.0.0:5000 --timeout 120 --workers 1
 
 ---
 
-## Deploy on Render or Railway
+## Deploy (hosting)
 
 Use **two services**: a Python **web service** (API) and a **static site** (frontend). Vite’s dev proxy does not run in production; the built UI must know your API URL.
+
+### Render Blueprint requires payment?
+
+Render’s **Blueprint** flow often asks for a card or paid plan. You do **not** need Blueprint. Pick one of these instead:
+
+| Option | Cost | Notes |
+|--------|------|--------|
+| **GitHub Pages + Fly.io** (recommended free) | $0 | Frontend: [`.github/workflows/deploy-pages.yml`](.github/workflows/deploy-pages.yml). API: [`fly.toml`](fly.toml) + [`Dockerfile`](Dockerfile). |
+| **Render — manual services** | Free tier limits | Create **Web Service** + **Static Site** by hand in the dashboard (no Blueprint). Same env vars as below. |
+| **Railway** | Trial / usage-based | Uses [`Procfile`](Procfile); two services from GitHub repo. |
+
+#### Free path: GitHub Pages (UI) + Fly.io (API)
+
+**1. API on Fly.io**
+
+```powershell
+# Install flyctl: https://fly.io/docs/hands-on/install-flyctl/
+cd C:\Users\Cinnamoroll\nba-win-predictor
+fly launch --no-deploy   # pick app name, region; do not deploy yet
+fly secrets set CORS_ORIGINS=https://RoycetheGreat2.github.io/HoopsAI/
+fly deploy
+fly status   # note URL, e.g. https://hoopsai-api.fly.dev
+```
+
+**2. Frontend on GitHub Pages**
+
+- Repo **Settings → Pages → Build and deployment**: Source = **GitHub Actions**.
+- Run workflow **Deploy frontend (GitHub Pages)** with `api_url` = your Fly URL (or push to `main` after editing the default in the workflow).
+- Site URL: `https://RoycetheGreat2.github.io/HoopsAI/` (repo name must match `VITE_BASE_PATH` in the workflow).
+
+**3. Wire CORS**
+
+Set `CORS_ORIGINS` on the API to your Pages URL (exact origin, no trailing path).
+
+#### Render without Blueprint (manual)
+
+1. **New → Web Service** → connect GitHub repo → root directory, build `pip install -r requirements.txt`, start `gunicorn app:app --bind 0.0.0.0:$PORT --timeout 120 --workers 1`.
+2. **New → Static Site** → `frontend/`, build `npm install && npm run build`, publish `dist`, set `VITE_API_URL`.
+3. Set `CORS_ORIGINS` on the API to the static site URL.
+
+---
+
+## Deploy on Render or Railway (reference)
+
+Use **two services**: a Python **web service** (API) and a **static site** (frontend).
 
 ### Files included for deploy
 

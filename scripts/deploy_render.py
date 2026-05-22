@@ -56,12 +56,11 @@ def main() -> None:
 
     if not api_key:
         print("RENDER_API_KEY not set.")
-        print("\nManual deploy (recommended):")
-        print(f"  1. Open: {BLUEPRINT_URL}")
-        print("  2. Apply blueprint, deploy hoopsai-api first")
-        print("  3. Set VITE_API_URL on hoopsai-web to the API URL, redeploy web")
-        print("  4. Set CORS_ORIGINS on hoopsai-api to the static site URL, redeploy API")
-        print("\nSee README.md — Deploy on Render or Railway")
+        print("\nRender Blueprint often requires payment. Use instead:")
+        print("  Free: GitHub Pages (workflow deploy-pages.yml) + Fly.io (fly.toml)")
+        print("  Or: Render manual Web Service + Static Site (no Blueprint)")
+        print(f"  Blueprint (paid): {BLUEPRINT_URL}")
+        print("\nSee README.md — Deploy (hosting)")
         sys.exit(0)
 
     ok = validate_blueprint(api_key)

@@ -1,0 +1,11 @@
+.git
+.github
+frontend/
+venv/
+.venv/
+__pycache__/
+*.pyc
+.env
+data/*.csv
+!data/nba_games_features.csv
+!data/prediction_tracker.json
