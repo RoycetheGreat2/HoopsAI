@@ -1,0 +1,24 @@
+name: Supabase setup
+
+on:
+  workflow_dispatch:
+
+jobs:
+  setup:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+      - run: pip install -r requirements.txt
+      - name: Create tables and migrate JSON tracker
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          if [ -z "$DATABASE_URL" ]; then
+            echo "Add GitHub secret DATABASE_URL (Supabase connection string) first."
+            exit 1
+          fi
+          python scripts/setup_database.py
+          python scripts/migrate_json_to_db.py

@@ -1,0 +1,38 @@
+name: Deploy (Render)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+      - name: Validate render.yaml (optional API key)
+        env:
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+        run: python scripts/deploy_render.py
+      - name: Production build checks
+        run: |
+          pip install -r requirements.txt
+          python scripts/verify_setup.py
+          python -c "from app import app; c=app.test_client(); assert c.get('/api/health').status_code==200"
+      - name: Build frontend
+        working-directory: frontend
+        run: |
+          npm ci
+          npm run build
+        env:
+          VITE_API_URL: https://hoopsai-api.onrender.com
+
+  deploy-note:
+    runs-on: ubuntu-latest
+    needs: validate
+    steps:
+      - name: Render Blueprint
+        run: |
+          echo "Apply Blueprint: https://dashboard.render.com/blueprint/new?repo=https://github.com/RoycetheGreat2/HoopsAI"
+          echo "After deploy: set VITE_API_URL on hoopsai-web, CORS_ORIGINS on hoopsai-api."
