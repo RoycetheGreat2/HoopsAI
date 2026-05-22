@@ -1,9 +1,12 @@
 """
 Flask API for NBA win predictor: health, latest live predictions JSON, model stats.
-Run: python app.py  →  http://127.0.0.1:5000  (debug on)
+
+Local dev:  python app.py  →  http://127.0.0.1:5000
+Production: gunicorn app:app --bind 0.0.0.0:$PORT --timeout 120 --workers 1
 """
 import importlib.util
 import json
+import os
 import re
 import sys
 from datetime import date, datetime, timedelta, timezone
@@ -19,16 +22,30 @@ import joblib
 import pandas as pd
 import requests
 from collections import defaultdict
-from flask import Flask, jsonify
+from flask import Flask, jsonify, request
 from flask_cors import CORS
 
 ROOT = Path(__file__).resolve().parent
+SCRIPTS_DIR = ROOT / "scripts"
+if str(SCRIPTS_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPTS_DIR))
+
+try:
+    from dotenv import load_dotenv
+
+    load_dotenv(ROOT / ".env")
+except ImportError:
+    pass
+
 DATA_DIR = ROOT / "data"
 MODEL_PATH = ROOT / "models" / "nba_model.pkl"
 FEATURES_PATH = ROOT / "models" / "features.pkl"
 FEATURES_CSV = ROOT / "data" / "nba_games_features.csv"
 LIVE_PREDICT_PATH = ROOT / "scripts" / "live_predict.py"
 PLAYOFF_TRACKER_PATH = DATA_DIR / "playoff_tracker.json"
+PREDICTION_TRACKER_PATH = DATA_DIR / "prediction_tracker.json"
+# Live tracking for deployed app — games before this date are excluded.
+MIN_TRACK_DATE = date(2026, 5, 22)
 
 PREDICTIONS_FILE_RE = re.compile(
     r"^live_predictions_(\d{4}-\d{2}-\d{2})\.json$"
@@ -47,7 +64,12 @@ assert _spec.loader is not None
 _spec.loader.exec_module(_lp)
 
 app = Flask(__name__)
-CORS(app)
+
+_cors_raw = os.environ.get("CORS_ORIGINS", "").strip()
+if _cors_raw and _cors_raw != "*":
+    CORS(app, origins=[o.strip() for o in _cors_raw.split(",") if o.strip()])
+else:
+    CORS(app)
 
 MODEL = joblib.load(MODEL_PATH)
 FEATURE_NAMES: list[str] = list(joblib.load(FEATURES_PATH))
@@ -107,6 +129,135 @@ def save_playoff_tracker(data: dict) -> None:
         json.dumps(data, indent=2),
         encoding="utf-8",
     )
+
+
+def load_prediction_tracker() -> dict:
+    try:
+        if not PREDICTION_TRACKER_PATH.is_file():
+            return {"tracking_since": MIN_TRACK_DATE.isoformat(), "games": []}
+        data = json.loads(PREDICTION_TRACKER_PATH.read_text(encoding="utf-8"))
+        if not isinstance(data, dict):
+            raise ValueError("root must be an object")
+        data.setdefault("tracking_since", MIN_TRACK_DATE.isoformat())
+        if not isinstance(data.get("games"), list):
+            data["games"] = []
+        return data
+    except Exception as e:
+        print(f"Warning: prediction tracker read failed ({e}); using empty tracker.")
+        return {"tracking_since": MIN_TRACK_DATE.isoformat(), "games": []}
+
+
+def save_prediction_tracker(data: dict) -> None:
+    PREDICTION_TRACKER_PATH.parent.mkdir(parents=True, exist_ok=True)
+    PREDICTION_TRACKER_PATH.write_text(
+        json.dumps(data, indent=2),
+        encoding="utf-8",
+    )
+
+
+def _database_enabled() -> bool:
+    try:
+        from db import database_enabled
+
+        return database_enabled()
+    except Exception:
+        return False
+
+
+def _iter_finished_games_from_weekly(days_out: list[dict]):
+    """Yield finished game records eligible for tracking."""
+    for day in days_out:
+        day_date = (day.get("date") or "")[:10]
+        for rec in day.get("games") or []:
+            if rec.get("status") != "post":
+                continue
+            actual = rec.get("actual_winner")
+            if actual is None:
+                continue
+            home = rec.get("home")
+            away = rec.get("away")
+            if not home or not away:
+                continue
+            utc = rec.get("utc_time")
+            if isinstance(utc, str) and len(utc) >= 10:
+                gdate = utc[:10]
+            else:
+                gdate = day_date
+            if gdate < MIN_TRACK_DATE.isoformat():
+                continue
+            pred = rec.get("predicted_winner")
+            yield {
+                "date": gdate,
+                "home": home,
+                "away": away,
+                "predicted_winner": pred,
+                "actual_winner": actual,
+                "correct": bool(pred == actual),
+                "home_win_probability": rec.get("home_win_probability"),
+                "away_win_probability": rec.get("away_win_probability"),
+            }
+
+
+def _sync_predictions_to_db(entries: list[dict]) -> None:
+    from db import get_cursor
+
+    with get_cursor() as cur:
+        for e in entries:
+            cur.execute(
+                """
+                INSERT INTO predictions (
+                    game_date, home, away, predicted_winner, actual_winner,
+                    correct, home_win_probability, away_win_probability
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (game_date, home, away) DO NOTHING
+                """,
+                (
+                    e["date"],
+                    e["home"],
+                    e["away"],
+                    e["predicted_winner"],
+                    e["actual_winner"],
+                    e["correct"],
+                    e.get("home_win_probability"),
+                    e.get("away_win_probability"),
+                ),
+            )
+
+
+def sync_prediction_tracker_from_weekly(days_out: list[dict]) -> None:
+    new_entries: list[dict] = []
+    if _database_enabled():
+        from db import get_cursor
+
+        with get_cursor() as cur:
+            cur.execute(
+                """
+                SELECT game_date::text, home, away
+                FROM predictions
+                WHERE game_date >= %s
+                """,
+                (MIN_TRACK_DATE.isoformat(),),
+            )
+            seen = {(r[0], r[1], r[2]) for r in cur.fetchall()}
+        for entry in _iter_finished_games_from_weekly(days_out):
+            key = (entry["date"], entry["home"], entry["away"])
+            if key in seen:
+                continue
+            new_entries.append(entry)
+            seen.add(key)
+        if new_entries:
+            _sync_predictions_to_db(new_entries)
+        return
+
+    tracker = load_prediction_tracker()
+    seen = {(x["date"], x["home"], x["away"]) for x in tracker["games"]}
+    for entry in _iter_finished_games_from_weekly(days_out):
+        key = (entry["date"], entry["home"], entry["away"])
+        if key in seen:
+            continue
+        tracker["games"].append(entry)
+        seen.add(key)
+    save_prediction_tracker(tracker)
 
 
 def sync_playoff_tracker_from_weekly(days_out: list[dict]) -> None:
@@ -256,14 +407,25 @@ def predictions():
     return jsonify(payload)
 
 
-@app.get("/api/weekly-predictions")
-def weekly_predictions():
+def _parse_week_start_param(raw: str | None) -> date:
     today = date.today()
-    week_end = today + timedelta(days=6)
-    days_out: list[dict] = []
+    if not raw:
+        return today
+    try:
+        d = date.fromisoformat(str(raw)[:10])
+    except ValueError:
+        return today
+    if d < MIN_TRACK_DATE:
+        return MIN_TRACK_DATE
+    return d
 
+
+def _fetch_week_days(week_start: date) -> list[dict]:
+    days_out: list[dict] = []
     for offset in range(7):
-        d = today + timedelta(days=offset)
+        d = week_start + timedelta(days=offset)
+        if d < MIN_TRACK_DATE:
+            continue
         ymd = d.strftime("%Y%m%d")
         try:
             resp = requests.get(
@@ -292,16 +454,87 @@ def weekly_predictions():
                     )
                     continue
 
-        if day_games:
-            days_out.append({"date": d.isoformat(), "games": day_games})
+        days_out.append({"date": d.isoformat(), "games": day_games})
+    return days_out
 
+
+@app.get("/api/weekly-predictions")
+def weekly_predictions():
+    week_start = _parse_week_start_param(request.args.get("start"))
+    week_end = week_start + timedelta(days=6)
+    days_out = _fetch_week_days(week_start)
+
+    sync_prediction_tracker_from_weekly(days_out)
     sync_playoff_tracker_from_weekly(days_out)
 
     return jsonify(
         {
-            "week_start": today.isoformat(),
+            "week_start": week_start.isoformat(),
             "week_end": week_end.isoformat(),
+            "tracking_since": MIN_TRACK_DATE.isoformat(),
             "days": days_out,
+        }
+    )
+
+
+@app.get("/api/prediction-accuracy")
+def prediction_accuracy():
+    today = date.today()
+    week_start = today - timedelta(days=6)
+    if week_start < MIN_TRACK_DATE:
+        week_start = MIN_TRACK_DATE
+    month_start = today - timedelta(days=29)
+    if month_start < MIN_TRACK_DATE:
+        month_start = MIN_TRACK_DATE
+
+    def tally(start: date, end: date) -> dict:
+        if _database_enabled():
+            from db import get_cursor
+
+            with get_cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT
+                        COUNT(*)::int AS total,
+                        COALESCE(SUM(CASE WHEN correct THEN 1 ELSE 0 END), 0)::int AS correct
+                    FROM predictions
+                    WHERE game_date >= %s
+                      AND game_date BETWEEN %s AND %s
+                    """,
+                    (MIN_TRACK_DATE.isoformat(), start.isoformat(), end.isoformat()),
+                )
+                row = cur.fetchone()
+                total = row[0] or 0
+                correct = row[1] or 0
+        else:
+            tracker = load_prediction_tracker()
+            games = [
+                g
+                for g in (tracker.get("games") or [])
+                if (g.get("date") or "") >= MIN_TRACK_DATE.isoformat()
+            ]
+            subset = [
+                g
+                for g in games
+                if start.isoformat() <= (g.get("date") or "") <= end.isoformat()
+            ]
+            total = len(subset)
+            correct = sum(1 for g in subset if g.get("correct"))
+        acc = (correct / total) if total else None
+        return {
+            "start": start.isoformat(),
+            "end": end.isoformat(),
+            "correct": correct,
+            "total": total,
+            "accuracy": acc,
+        }
+
+    return jsonify(
+        {
+            "tracking_since": MIN_TRACK_DATE.isoformat(),
+            "storage": "postgres" if _database_enabled() else "json",
+            "week": tally(week_start, today),
+            "month": tally(month_start, today),
         }
     )
 
@@ -380,4 +613,6 @@ def model_stats():
 
 
 if __name__ == "__main__":
-    app.run(host="127.0.0.1", port=5000, debug=True)
+    port = int(os.environ.get("PORT", "5000"))
+    debug = os.environ.get("FLASK_DEBUG", "1").lower() in ("1", "true", "yes")
+    app.run(host="0.0.0.0", port=port, debug=debug)

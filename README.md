@@ -1,6 +1,6 @@
 # HoopsAI - NBA Win Percentage Predictor
 
-> ⚠️ **Work in Progress** — This project is still actively being developed. Features, accuracy, and structure are subject to change.
+> **Work in Progress** — This project is still actively being developed. Features, accuracy, and structure are subject to change.
 
 A machine learning pipeline and web application that predicts NBA game outcomes. It scrapes live and historical data, engineers over 40 predictive features, and serves real-time win probability predictions through a React frontend powered by a Flask REST API.
 
@@ -28,81 +28,262 @@ Basketball-Reference (scraping)
   frontend/  (React + Vite)
 ```
 
----
-
-## File Reference
-
-### Scripts — Data Pipeline
-| File | What it does |
-|------|-------------|
-| `scripts/scraper.py` | Scrapes 2025 season game results → `nba_games_raw.csv` |
-| `scripts/scrape_seasons.py` | Scrapes 2023–2024 historical results → `nba_games_historical.csv` |
-| `scripts/scrape_team_stats.py` | Scrapes team Pace, TS%, 3PT rate → `nba_team_stats.csv` |
-| `scripts/scrape_players.py` | Scrapes 2025 top-3 player stats per team → `nba_player_stats.csv` |
-| `scripts/scrape_players_historical.py` | Scrapes & merges 2023–2025 player stats → `nba_player_stats_historical.csv` |
-| `scripts/scrape_player_gamelogs.py` | Scrapes 2025 player game logs → `nba_player_gamelogs.csv` |
-| `scripts/scrape_player_gamelogs_historical.py` | Scrapes & merges 2023–2025 gamelogs → `nba_player_gamelogs_all.csv` |
-| `scripts/build_injury_features.py` | Flags star player absences per game → `nba_player_availability.csv` |
-| `scripts/features.py` | Master ETL — merges all data, computes ELO + rolling features → `nba_games_features.csv` |
-| `scripts/train.py` | Trains LightGBM classifier → `models/nba_model.pkl` |
-| `scripts/live_predict.py` | Fetches ESPN schedule, runs model → `data/live_predictions_YYYY-MM-DD.json` |
-
-### Data Files
-| File | What it contains |
-|------|----------------|
-| `data/nba_games_raw.csv` | 2025 season game results |
-| `data/nba_games_historical.csv` | 2023–2024 season game results |
-| `data/nba_team_stats.csv` | Team-level advanced stats per season |
-| `data/nba_player_stats.csv` | 2025 top player averages per team |
-| `data/nba_player_stats_historical.csv` | 2023–2025 merged player stats |
-| `data/nba_player_gamelogs.csv` | 2025 player game-by-game logs |
-| `data/nba_player_gamelogs_all.csv` | 2023–2025 merged player gamelogs |
-| `data/nba_player_availability.csv` | Star player absence flags |
-| `data/nba_games_features.csv` | Final enriched feature matrix (model input) |
-| `data/live_predictions_*.json` | Daily prediction output from live_predict.py |
-| `data/playoff_tracker.json` | Model accuracy log for playoff games |
-
-### Model
-| File | What it contains |
-|------|----------------|
-| `models/nba_model.pkl` | Trained LightGBM classifier |
-| `models/features.pkl` | Ordered list of 41 feature names |
-
-### Application
-| File | What it does |
-|------|-------------|
-| `app.py` | Flask REST API — serves predictions to the frontend |
-| `frontend/src/App.jsx` | Main React app — fetches and renders the weekly schedule |
-| `frontend/src/components/MatchupCard.jsx` | Game card with team logos and win probability bar |
-| `frontend/src/components/ModelStatsPanel.jsx` | Displays model accuracy and top features |
-| `frontend/src/components/PlayoffTrackerPanel.jsx` | Tracks model accuracy on playoff series |
-| `frontend/src/components/HealthBanner.jsx` | API connection status indicator |
+**Live predictions do not retrain the model.** The API loads a fixed `nba_model.pkl` and uses the latest row per team from `data/nba_games_features.csv` for rolling stats and ELO.
 
 ---
 
-## Running the Project
+## Running Locally
+
+### Virtual environments (`venv` vs `.venv`)
+
+Use **one** environment at the repo root — not both.
+
+| Folder | Activate (PowerShell) |
+|--------|------------------------|
+| `venv` (recommended) | `.\venv\Scripts\activate` |
+| `.venv` (also fine) | `.\.venv\Scripts\activate` |
+
+If you accidentally created `.venv` and already have `venv`, delete the extra copy to save space (both are gitignored):
+
+```powershell
+# Only if you do NOT need .venv — keeps your original venv/
+Remove-Item -Recurse -Force .venv
+```
+
+Then install deps **after** activating the environment you keep:
+
+```powershell
+python -m venv venv
+.\venv\Scripts\activate
+pip install -r requirements.txt
+```
 
 ### 1. Install dependencies
-```bash
-# Python backend
-pip install flask flask-cors requests beautifulsoup4 lxml pandas numpy lightgbm scikit-learn joblib
 
-# React frontend (only needed once)
+```bash
+# Python backend (from repo root, venv activated)
+pip install -r requirements.txt
+
+# React frontend
 cd frontend && npm install
 ```
 
-### 2. Start the backend API
+Verify plan artifacts:
+
 ```bash
-python app.py
-# Running at http://127.0.0.1:5000
+python scripts/verify_setup.py
 ```
 
-### 3. Start the frontend
+### 2. Start the backend API
+
+```bash
+python app.py
+# http://127.0.0.1:5000
+```
+
+### 3. Start the frontend (separate terminal)
+
 ```bash
 cd frontend
 npm run dev
-# Running at http://localhost:5173
+# http://localhost:3000  (Vite proxies /api → Flask on port 5000)
 ```
+
+If the UI shows "Could not reach the API", start step 2 first, then open http://127.0.0.1:5000/api/health — you should see `{"status":"ok",...}`.
+
+### Production-style local API (Gunicorn)
+
+```bash
+gunicorn app:app --bind 0.0.0.0:5000 --timeout 120 --workers 1
+```
+
+---
+
+## Deploy on Render or Railway
+
+Use **two services**: a Python **web service** (API) and a **static site** (frontend). Vite’s dev proxy does not run in production; the built UI must know your API URL.
+
+### Files included for deploy
+
+| File | Purpose |
+|------|---------|
+| [`requirements.txt`](requirements.txt) | Python dependencies |
+| [`Procfile`](Procfile) | Railway start command |
+| [`render.yaml`](render.yaml) | Optional Render Blueprint (API + static site) |
+| [`frontend/.env.example`](frontend/.env.example) | `VITE_API_URL` template |
+
+### Must be in Git (or uploaded to the host)
+
+- `models/nba_model.pkl`, `models/features.pkl`
+- `data/nba_games_features.csv` (loaded at API startup)
+- `scripts/live_predict.py` (imported by `app.py`)
+- Writable `data/` for `prediction_tracker.json` (accuracy since 2026-05-22)
+
+### Service 1 — API (Render Web Service or Railway)
+
+| Setting | Value |
+|---------|--------|
+| Root directory | repo root |
+| Build | `pip install -r requirements.txt` |
+| Start | `gunicorn app:app --bind 0.0.0.0:$PORT --timeout 120 --workers 1` |
+| Health check | `/api/health` |
+
+**Environment variables**
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `PORT` | Auto | Set by Render/Railway |
+| `CORS_ORIGINS` | Recommended | Comma-separated frontend URL(s), e.g. `https://hoopsai-web.onrender.com` |
+| `FLASK_DEBUG` | Optional | Set to `0` in production |
+
+**Smoke tests after deploy**
+
+- `https://YOUR-API.onrender.com/api/health`
+- `https://YOUR-API.onrender.com/api/weekly-predictions` (may take 30–60s)
+
+### Service 2 — Frontend (Render Static Site or Railway static)
+
+| Setting | Value |
+|---------|--------|
+| Root | `frontend` |
+| Build | `npm install && npm run build` |
+| Publish directory | `dist` |
+
+**Build environment**
+
+| Variable | Example |
+|----------|---------|
+| `VITE_API_URL` | `https://hoopsai-api.onrender.com` (no trailing slash) |
+
+Redeploy the static site whenever the API URL changes.
+
+### Wire services together
+
+1. Deploy the API → copy its public URL.
+2. Set `VITE_API_URL` on the static site → deploy frontend.
+3. Set `CORS_ORIGINS` on the API to the static site URL → redeploy API.
+4. Open the frontend URL; the hero should show "Live predictions active".
+
+### Persistent accuracy data
+
+`data/prediction_tracker.json` is updated when users load games. On free tiers, **disk is ephemeral** — the file resets on redeploy unless you attach a **persistent volume** (Render Disk / Railway Volume) mounted at `data/`.
+
+### Railway quick start
+
+1. New project from GitHub repo.
+2. Add a service using the repo root; Railway detects [`Procfile`](Procfile).
+3. Add a second static service from `frontend/` with build `npm install && npm run build`, output `dist`, and `VITE_API_URL`.
+
+---
+
+## Updating the Model and Data
+
+There are three paths — do not confuse them.
+
+### Path 1 — Live predictions (automatic)
+
+**When:** Each visit / call to `/api/weekly-predictions`.
+
+**What changes:** ESPN schedule + probabilities from the **existing** `nba_model.pkl` and latest team rows in `nba_games_features.csv`. Injury features are **0** live. Finished games are tracked since 2026-05-22 in **Postgres** (if `DATABASE_URL` is set) or `data/prediction_tracker.json`.
+
+No scripts to run. **Retrain does not use ESPN** — training data comes from Basketball-Reference scrapers.
+
+### Path 2 — Refresh team form (manual, no retrain)
+
+**When:** Weekly, after new games finish — keeps rolling averages and ELO current without retraining.
+
+```powershell
+cd C:\Users\Cinnamoroll\nba-win-predictor
+.\venv\Scripts\activate
+
+python scripts/scraper.py
+python scripts/scrape_players_historical.py
+python scripts/scrape_player_gamelogs_historical.py
+python scripts/build_injury_features.py
+python scripts/features.py
+
+# Restart API locally or redeploy so app.py reloads the CSV
+```
+
+**Season labels:** [`scripts/features.py`](scripts/features.py) assigns each raw game a B-Ref season end year from its date (e.g. Oct 2025 → season `2026`). [`scripts/scraper.py`](scripts/scraper.py) uses `BREF_SEASON=2026` for the current schedule URL.
+
+### Path 3 — Full retrain (manual or monthly)
+
+**When:** Monthly automation or after you have refreshed the feature matrix.
+
+```powershell
+# One command (scrape + features + train):
+python scripts/monthly_pipeline.py
+
+# Or only features + train if CSVs are already fresh:
+$env:SKIP_SCRAPE="1"
+python scripts/monthly_pipeline.py
+```
+
+[`scripts/train.py`](scripts/train.py):
+
+- **Train:** 2023 H2 + full 2024 + full 2025 (weights: 2023=1×, 2024/2025=2×)
+- **Test:** 2026 season (falls back to 2025 if no 2026 rows yet)
+- **Saves** `models/nba_model.pkl` + `models/features.pkl` (best tuning variant, or baseline 41f)
+- Writes `data/monthly_train_summary.json` for CI / `model_runs` logging
+
+Restart or redeploy the API after new artifacts exist.
+
+### Monthly automation (GitHub Actions)
+
+Workflow: [`.github/workflows/monthly-retrain.yml`](.github/workflows/monthly-retrain.yml)
+
+- Runs on the **1st of each month** (06:00 UTC) or manually via **workflow_dispatch**
+- Runs `scripts/monthly_pipeline.py`
+- Uploads `nba_games_features.csv`, model pickles, and summary as workflow artifacts
+- Set GitHub secret `DATABASE_URL` to log runs into Supabase `model_runs`
+
+Basketball-Reference may rate-limit; monthly cadence is appropriate.
+
+### Recommended cadence
+
+| Cadence | Action |
+|---------|--------|
+| Daily | Nothing; tracker updates via API |
+| Weekly | Path 2 (`features.py` only) after updating `nba_games_raw.csv` |
+| Monthly | `python scripts/monthly_pipeline.py` or GitHub Actions workflow |
+
+---
+
+## Supabase database (recommended for production)
+
+Training still uses **CSV + pickle files**. Postgres stores **live prediction accuracy** and **monthly job history** so redeploys do not wipe stats.
+
+### Setup
+
+1. Create a free project at [supabase.com](https://supabase.com).
+2. Copy the **Database URI** (Settings → Database).
+3. Copy [`.env.example`](.env.example) to `.env` and set `DATABASE_URL=postgresql://...`
+4. From repo root:
+
+```powershell
+pip install -r requirements.txt
+python scripts/setup_database.py
+```
+
+Tables: `predictions`, `model_runs`, `playoff_tracker` (schema reserved).
+
+Migrate existing JSON tracker into Postgres (optional, once):
+
+```powershell
+python scripts/migrate_json_to_db.py
+```
+
+### App behavior
+
+| `DATABASE_URL` | Prediction tracking |
+|----------------|---------------------|
+| Set | [`app.py`](app.py) writes/reads `predictions` table |
+| Not set | Falls back to `data/prediction_tracker.json` |
+
+Set `DATABASE_URL` on **Render/Railway** for the API service and in **GitHub Actions secrets** for monthly logs.
+
+Also set `CORS_ORIGINS` to your static site URL in production.
 
 ---
 
@@ -112,9 +293,10 @@ npm run dev
 |----------|-------------|
 | `GET /api/health` | API connection check |
 | `GET /api/predictions` | Latest pre-generated predictions |
-| `GET /api/weekly-predictions` | Live 7-day predictions via ESPN |
+| `GET /api/weekly-predictions` | Live 7-day predictions via ESPN (`?start=YYYY-MM-DD` optional) |
+| `GET /api/prediction-accuracy` | Correct picks for past 7 / 30 days (since 2026-05-22) |
 | `GET /api/playoff-stats` | Playoff prediction accuracy tracker |
-| `GET /api/model-stats` | Model accuracy, AUC-ROC, top features |
+| `GET /api/model-stats` | Model validation metrics (legacy) |
 
 ---
 
@@ -126,14 +308,14 @@ npm run dev
 | AUC-ROC | 0.818 |
 | Brier Score | 0.1742 |
 | Features | 41 |
-| Training data | 2023 (H2) + full 2024 season |
-| Test data | 2025 season (out-of-sample) |
+| Training data | 2023 (H2) + 2024 + 2025 |
+| Test data | 2026 season (forward validation; falls back to 2025 if empty) |
 
 ---
 
 ## Tech Stack
 
-- **Data:** Python, Pandas, BeautifulSoup, ESPN API
+- **Data:** Python, Pandas, ESPN API, Basketball-Reference scrapers
 - **Model:** LightGBM, scikit-learn, joblib
-- **Backend:** Flask, Flask-CORS
-- **Frontend:** React, Vite, Axios
+- **Backend:** Flask, Flask-CORS, Gunicorn
+- **Frontend:** React, Vite, TypeScript, Tailwind

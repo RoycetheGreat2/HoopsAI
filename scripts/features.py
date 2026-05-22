@@ -1,12 +1,20 @@
 import pandas as pd
 import numpy as np
 import os
+import sys
+from pathlib import Path
 
-# Load all three seasons
-df_2025 = pd.read_csv('data/nba_games_raw.csv')
-df_2025['season'] = 2025
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from season_utils import nba_season_end_year
+
+# Load historical + current-season raw games
 df_hist = pd.read_csv('data/nba_games_historical.csv')
-df = pd.concat([df_hist, df_2025], ignore_index=True)
+df_raw = pd.read_csv('data/nba_games_raw.csv')
+df_raw['date'] = pd.to_datetime(df_raw['date'], format='%a, %b %d, %Y', errors='coerce')
+df_raw['season'] = df_raw['date'].apply(nba_season_end_year)
+df_raw = df_raw.dropna(subset=['season'])
+df_raw['season'] = df_raw['season'].astype(int)
+df = pd.concat([df_hist, df_raw], ignore_index=True)
 
 players = pd.read_csv('data/nba_player_stats_historical.csv')
 team_stats = pd.read_csv('data/nba_team_stats.csv')
@@ -25,8 +33,11 @@ df = df.dropna(subset=['pts_scored', 'pts_allowed'])
 df['result_binary'] = df['result'].apply(lambda x: 1 if x == 'W' else 0)
 df['is_home'] = df['home_away'].apply(lambda x: 1 if x == 'home' else 0)
 
-# Date and sorting
-df['date'] = pd.to_datetime(df['date'], format='%a, %b %d, %Y')
+# Date and sorting (raw rows may already be parsed; historical uses B-Ref string format)
+df['date'] = pd.to_datetime(df['date'], format='%a, %b %d, %Y', errors='coerce')
+if df['date'].isna().any():
+    df['date'] = pd.to_datetime(df['date'], errors='coerce')
+df = df.dropna(subset=['date'])
 df = df.sort_values(['team', 'date']).reset_index(drop=True)
 
 # Base stats

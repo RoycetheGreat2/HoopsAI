@@ -1,0 +1,26 @@
+# Render Blueprint: API web service + static frontend
+# https://render.com/docs/blueprint-spec
+services:
+  - type: web
+    name: hoopsai-api
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn app:app --bind 0.0.0.0:$PORT --timeout 120 --workers 1
+    healthCheckPath: /api/health
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.10.0"
+      # Set after static site is created, e.g. https://hoopsai-web.onrender.com
+      - key: CORS_ORIGINS
+        sync: false
+
+  - type: web
+    name: hoopsai-web
+    runtime: static
+    rootDir: frontend
+    buildCommand: npm install && npm run build
+    staticPublishPath: dist
+    envVars:
+      # Set to your API URL, e.g. https://hoopsai-api.onrender.com
+      - key: VITE_API_URL
+        sync: false
