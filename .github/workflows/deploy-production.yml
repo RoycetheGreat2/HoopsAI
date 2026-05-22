@@ -1,0 +1,36 @@
+name: Deploy production (Render + Supabase)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Deploy (Supabase + Render)
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+        run: |
+          if [ -z "$DATABASE_URL" ]; then
+            echo "Add GitHub secret DATABASE_URL (Supabase connection string)."
+            exit 1
+          fi
+          if [ -z "$RENDER_API_KEY" ]; then
+            echo "Add GitHub secret RENDER_API_KEY (Render Dashboard → Account → API Keys)."
+            exit 1
+          fi
+          if echo "$DATABASE_URL" | grep -q YOUR_PROJECT; then
+            echo "DATABASE_URL is still a placeholder."
+            exit 1
+          fi
+          python scripts/deploy_production.py --skip-github-secret
