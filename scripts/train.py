@@ -1,5 +1,7 @@
+import json
 import sys
 import warnings
+from pathlib import Path
 
 import joblib
 import lightgbm as lgb
@@ -26,11 +28,15 @@ train_df = pd.concat(
     [
         train_2023[train_2023["date"] >= cutoff_2023],
         df[df["season"] == 2024],
+        df[df["season"] == 2025],
     ]
 ).copy()
-test_df = df[df["season"] == 2025].copy()
+test_df = df[df["season"] == 2026].copy()
+if len(test_df) == 0:
+    print("Warning: no 2026 season rows in feature matrix; falling back to 2025 for test.")
+    test_df = df[df["season"] == 2025].copy()
 
-w_train = train_df["season"].map({2023: 1.0, 2024: 2.0}).values
+w_train = train_df["season"].map({2023: 1.0, 2024: 2.0, 2025: 2.0}).values
 TARGET = "result_binary"
 y_train = train_df[TARGET].values
 y_test = test_df[TARGET].values
@@ -200,7 +206,7 @@ runs.append(
 baseline = runs[0]
 print()
 print(
-    "=== TUNING RESULTS (forward validation: train 2023h2+2024, test 2025) ==="
+    "=== TUNING RESULTS (forward validation: train 2023h2+2024+2025, test 2026) ==="
 )
 print(f"{'Variant':<24} | {'Accuracy':>8} | {'AUC-ROC':>7} | {'Brier':>5}")
 print("-------------------------|----------|---------|-------")
@@ -218,16 +224,38 @@ qualifiers = [
     if r["acc"] > b_acc and r["auc"] >= b_auc
 ]
 
+model_saved = False
+saved_label = baseline["label"]
 if qualifiers:
     best = max(qualifiers, key=lambda r: (r["auc"], -r["brier"]))
     joblib.dump(best["model"], "models/nba_model.pkl")
     joblib.dump(best["features"], "models/features.pkl")
+    model_saved = True
+    saved_label = best["label"]
     print()
     print(
         f"New best: {best['label']} | acc={best['acc']*100:.1f}% "
         f"AUC={best['auc']:.3f} Brier={best['brier']:.4f}"
     )
-    print("✅ New best model saved.")
+    print("New best model saved.")
 else:
+    joblib.dump(baseline["model"], "models/nba_model.pkl")
+    joblib.dump(baseline["features"], "models/features.pkl")
+    model_saved = True
     print()
-    print("⛔ No improvement. Baseline model retained. Ready for Phase 5.")
+    print("No tuning beat baseline; baseline 41f model saved.")
+
+summary = {
+    "train_rows": int(len(train_df)),
+    "test_rows": int(len(test_df)),
+    "test_season": int(test_df["season"].iloc[0]) if len(test_df) else None,
+    "baseline_accuracy": float(baseline["acc"]),
+    "baseline_auc": float(baseline["auc"]),
+    "baseline_brier": float(baseline["brier"]),
+    "model_saved": model_saved,
+    "saved_label": saved_label,
+}
+summary_path = Path("data/monthly_train_summary.json")
+summary_path.parent.mkdir(parents=True, exist_ok=True)
+summary_path.write_text(json.dumps(summary, indent=2), encoding="utf-8")
+print(f"Wrote summary to {summary_path}")

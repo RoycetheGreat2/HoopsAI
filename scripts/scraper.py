@@ -11,7 +11,8 @@ TEAMS = [
     'OKC', 'ORL', 'PHI', 'PHO', 'POR', 'SAC', 'SAS', 'TOR', 'UTA', 'WAS'
 ]
 
-SEASON = 2025
+# B-Ref URL season end year (2025-26 -> 2026). Override: set BREF_SEASON=2026
+SEASON = int(os.environ.get("BREF_SEASON", "2026"))
 
 def scrape_team(team):
     url = f"https://www.basketball-reference.com/teams/{team}/{SEASON}_games.html"

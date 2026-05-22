@@ -1,0 +1,53 @@
+name: Monthly retrain
+
+on:
+  schedule:
+    # 1st of each month, 06:00 UTC
+    - cron: "0 6 1 * *"
+  workflow_dispatch:
+
+jobs:
+  retrain:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Verify model and feature matrix exist
+        run: |
+          test -f models/nba_model.pkl || echo "Warning: nba_model.pkl missing in repo"
+          test -f data/nba_games_features.csv || echo "Warning: nba_games_features.csv missing"
+
+      - name: Run monthly pipeline
+        env:
+          BREF_SEASON: "2026"
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: python scripts/monthly_pipeline.py
+
+      - name: Upload training artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: monthly-retrain-${{ github.run_id }}
+          path: |
+            data/nba_games_features.csv
+            data/monthly_train_summary.json
+            models/nba_model.pkl
+            models/features.pkl
+          if-no-files-found: warn
+
+      # Optional: commit updated CSV/model back to repo (disabled by default — large files)
+      # - name: Commit artifacts
+      #   run: |
+      #     git config user.name "github-actions"
+      #     git config user.email "actions@github.com"
+      #     git add data/nba_games_features.csv models/*.pkl data/monthly_train_summary.json
+      #     git commit -m "Monthly retrain $(date -u +%Y-%m-%d)" || true
+      #     git push
