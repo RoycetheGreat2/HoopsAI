@@ -49,6 +49,13 @@ PREDICTION_TRACKER_PATH = DATA_DIR / "prediction_tracker.json"
 # Live tracking for deployed app — games before this date are excluded.
 MIN_TRACK_DATE = date(2026, 5, 22)
 
+from week_epoch import (
+    epoch_week_start,
+    epoch_week_end,
+    is_current_epoch_week,
+    max_epoch_week_start,
+)
+
 PREDICTIONS_FILE_RE = re.compile(
     r"^live_predictions_(\d{4}-\d{2}-\d{2})\.json$"
 )
@@ -411,12 +418,22 @@ def _database_health() -> dict:
 
 @app.get("/api/health")
 def health():
+    try:
+        _ensure_current_epoch_week_cached()
+    except Exception as e:
+        print(f"Warning: current-week cache warm failed ({e})")
+    today = date.today()
+    cur = epoch_week_start(today, MIN_TRACK_DATE)
     return jsonify(
         {
             "status": "ok",
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "prediction_storage": _prediction_storage_mode(),
             "tracking_since": MIN_TRACK_DATE.isoformat(),
+            "current_epoch_week": {
+                "start": cur.isoformat(),
+                "end": epoch_week_end(cur).isoformat(),
+            },
             "database": _database_health(),
         }
     )
@@ -456,6 +473,9 @@ def predictions():
 
 _WEEKLY_CACHE: dict[str, tuple[float, list[dict]]] = {}
 _WEEKLY_CACHE_TTL_SEC = int(os.environ.get("WEEKLY_CACHE_TTL_SEC", "180"))
+_CURRENT_WEEK_CACHE_TTL_SEC = int(
+    os.environ.get("CURRENT_WEEK_CACHE_TTL_SEC", "86400")
+)
 _ACCURACY_CACHE: tuple[float, dict] | None = None
 _ACCURACY_CACHE_TTL_SEC = int(os.environ.get("ACCURACY_CACHE_TTL_SEC", "90"))
 
@@ -463,14 +483,31 @@ _ACCURACY_CACHE_TTL_SEC = int(os.environ.get("ACCURACY_CACHE_TTL_SEC", "90"))
 def _parse_week_start_param(raw: str | None) -> date:
     today = date.today()
     if not raw:
-        return today
+        return epoch_week_start(today, MIN_TRACK_DATE)
     try:
         d = date.fromisoformat(str(raw)[:10])
     except ValueError:
-        return today
+        return epoch_week_start(today, MIN_TRACK_DATE)
     if d < MIN_TRACK_DATE:
         return MIN_TRACK_DATE
-    return d
+    return epoch_week_start(d, MIN_TRACK_DATE)
+
+
+def _weekly_cache_ttl_sec(week_start: date) -> int:
+    if is_current_epoch_week(week_start, date.today()):
+        return _CURRENT_WEEK_CACHE_TTL_SEC
+    return _WEEKLY_CACHE_TTL_SEC
+
+
+def _ensure_current_epoch_week_cached() -> None:
+    """Warm cache for the active epoch week (e.g. May 22–28, then May 29–Jun 4)."""
+    start = epoch_week_start(date.today(), MIN_TRACK_DATE)
+    cache_key = start.isoformat()
+    now = time.time()
+    cached = _WEEKLY_CACHE.get(cache_key)
+    if cached and now - cached[0] < _weekly_cache_ttl_sec(start):
+        return
+    _fetch_week_days(start)
 
 
 def _fetch_single_day(d: date) -> dict | None:
@@ -509,8 +546,9 @@ def _fetch_single_day(d: date) -> dict | None:
 def _fetch_week_days(week_start: date) -> list[dict]:
     cache_key = week_start.isoformat()
     now = time.time()
+    ttl = _weekly_cache_ttl_sec(week_start)
     cached = _WEEKLY_CACHE.get(cache_key)
-    if cached and now - cached[0] < _WEEKLY_CACHE_TTL_SEC:
+    if cached and now - cached[0] < ttl:
         return cached[1]
 
     dates = [week_start + timedelta(days=i) for i in range(7)]
@@ -532,8 +570,9 @@ def _fetch_week_days(week_start: date) -> list[dict]:
 
 @app.get("/api/weekly-predictions")
 def weekly_predictions():
+    _ensure_current_epoch_week_cached()
     week_start = _parse_week_start_param(request.args.get("start"))
-    week_end = week_start + timedelta(days=6)
+    week_end = epoch_week_end(week_start)
     days_out = _fetch_week_days(week_start)
 
     try:
@@ -549,11 +588,14 @@ def weekly_predictions():
 
     accuracy = _build_accuracy_payload()
 
+    today = date.today()
     return jsonify(
         {
             "week_start": week_start.isoformat(),
             "week_end": week_end.isoformat(),
             "tracking_since": MIN_TRACK_DATE.isoformat(),
+            "current_epoch_week_start": epoch_week_start(today, MIN_TRACK_DATE).isoformat(),
+            "is_current_epoch_week": is_current_epoch_week(week_start, today),
             "days": days_out,
             "accuracy": accuracy,
         }

@@ -11,7 +11,8 @@ import {
   clampYmd,
   compareYmd,
   addDaysYmd,
-  daysBetweenYmd,
+  epochWeekStart,
+  maxEpochWeekStart,
 } from './hooks/useApi';
 import { TRACKING_SINCE } from './config';
 import { Loader2, AlertTriangle, RefreshCw } from 'lucide-react';
@@ -22,14 +23,9 @@ function maxSelectableDate(today: string): string {
   return addDaysYmd(today, 6);
 }
 
-/** First day of the 7-day strip — keeps launch day visible for two weeks after tracking starts. */
+/** Current 7-day epoch from tracking anchor (May 22–28, then May 29–Jun 4, …). */
 function initialWeekStart(today: string): string {
-  const maxD = maxSelectableDate(today);
-  const maxWeekStart = addDaysYmd(maxD, -6);
-  if (daysBetweenYmd(TRACKING_SINCE, today) <= 13) {
-    return clampYmd(TRACKING_SINCE, TRACKING_SINCE, maxWeekStart);
-  }
-  return clampYmd(addDaysYmd(today, -6), TRACKING_SINCE, maxWeekStart);
+  return epochWeekStart(today, TRACKING_SINCE);
 }
 
 export default function App() {
@@ -79,8 +75,11 @@ export default function App() {
             setSelectedDate(clampYmd(d, TRACKING_SINCE, maxDate))
           }
           maxSelectableDate={maxDate}
+          maxEpochWeekStart={maxEpochWeekStart(today, TRACKING_SINCE)}
           viewWeekStart={viewWeekStart}
-          onViewWeekStartChange={setViewWeekStart}
+          onViewWeekStartChange={(start) =>
+            setViewWeekStart(epochWeekStart(start, TRACKING_SINCE))
+          }
         />
 
         <div className="mb-6 flex gap-8 border-b border-border">

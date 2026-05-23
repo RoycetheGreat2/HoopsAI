@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
+import { TRACKING_SINCE } from '@/config';
 
 /* ------------------------------------------------------------------ */
 /*  Types matching Flask API responses from app.py                    */
@@ -29,6 +30,8 @@ export interface WeeklyPredictions {
   week_start: string;
   week_end: string;
   tracking_since?: string;
+  current_epoch_week_start?: string;
+  is_current_epoch_week?: boolean;
   days: DayData[];
   accuracy?: PredictionAccuracy;
 }
@@ -211,17 +214,35 @@ export function useWeeklyPredictions(weekStart?: string) {
 
   useEffect(() => {
     let cancelled = false;
+    const today = localYmd();
+    const effectiveStart = weekStart
+      ? epochWeekStart(weekStart, TRACKING_SINCE)
+      : epochWeekStart(today, TRACKING_SINCE);
+    const isCurrent = isCurrentEpochWeek(effectiveStart, today, TRACKING_SINCE);
+
+    if (isCurrent) {
+      const cached = loadWeekFromStorage(effectiveStart);
+      if (cached) {
+        setData(cached);
+        if (cached.accuracy) setAccuracyCache(cached.accuracy);
+        setLoading(false);
+      }
+    }
+
     (async () => {
-      setLoading(true);
+      if (!isCurrent || !loadWeekFromStorage(effectiveStart)) {
+        setLoading(true);
+      }
       setError(null);
       try {
-        const qs = weekStart ? `?start=${encodeURIComponent(weekStart)}` : '';
+        const qs = `?start=${encodeURIComponent(effectiveStart)}`;
         const res = await apiFetch<WeeklyPredictions>(
           `/api/weekly-predictions${qs}`,
           120000
         );
         if (!cancelled) {
           setData(res);
+          saveWeekToStorage(res);
           if (res.accuracy) setAccuracyCache(res.accuracy);
         }
       } catch (e: unknown) {
@@ -380,6 +401,53 @@ export function daysBetweenYmd(from: string, to: string): number {
   const a = parseYmd(from);
   const b = parseYmd(to);
   return Math.round((b.getTime() - a.getTime()) / 86_400_000);
+}
+
+/** 7-day epoch anchored at `since` (May 22 → May 22–28, May 29 → May 29–Jun 4, …). */
+export function epochWeekStart(ymd: string, since: string): string {
+  if (compareYmd(ymd, since) < 0) return since;
+  const days = daysBetweenYmd(since, ymd);
+  const offset = Math.floor(days / 7) * 7;
+  return addDaysYmd(since, offset);
+}
+
+export function epochWeekEnd(weekStart: string): string {
+  return addDaysYmd(weekStart, 6);
+}
+
+export function maxEpochWeekStart(today: string, since: string): string {
+  return epochWeekStart(addDaysYmd(today, 6), since);
+}
+
+export function isCurrentEpochWeek(weekStart: string, today: string, since: string): boolean {
+  return weekStart === epochWeekStart(today, since);
+}
+
+const WEEK_STORAGE_PREFIX = 'hoopsai-week-v1:';
+
+function loadWeekFromStorage(weekStart: string): WeeklyPredictions | null {
+  try {
+    const raw = sessionStorage.getItem(WEEK_STORAGE_PREFIX + weekStart);
+    if (!raw) return null;
+    return JSON.parse(raw) as WeeklyPredictions;
+  } catch {
+    return null;
+  }
+}
+
+function saveWeekToStorage(data: WeeklyPredictions): void {
+  try {
+    sessionStorage.setItem(
+      WEEK_STORAGE_PREFIX + data.week_start,
+      JSON.stringify(data)
+    );
+    const current = data.current_epoch_week_start;
+    if (current && current === data.week_start) {
+      sessionStorage.setItem(WEEK_STORAGE_PREFIX + '_current', data.week_start);
+    }
+  } catch {
+    /* quota / private mode */
+  }
 }
 
 /** Clamp date to [since, maxYmd] (maxYmd defaults to today). */
