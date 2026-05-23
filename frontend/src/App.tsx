@@ -171,7 +171,9 @@ export default function App() {
               </div>
             )}
 
-            {activeTab === 'statistics' && <PerformancePanel />}
+            {activeTab === 'statistics' && (
+              <PerformancePanel accuracySeed={payload?.accuracy} />
+            )}
           </div>
 
           <div className="lg:col-span-1">

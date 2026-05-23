@@ -1,6 +1,11 @@
 import { Target, Loader2, CalendarRange } from 'lucide-react';
-import { usePredictionAccuracy } from '@/hooks/useApi';
+import {
+  usePredictionAccuracy,
+  setAccuracyCache,
+  type PredictionAccuracy,
+} from '@/hooks/useApi';
 import { TRACKING_SINCE } from '@/config';
+import { useEffect } from 'react';
 
 function formatAcc(acc: number | null, total: number): string {
   if (total === 0 || acc == null) return '—';
@@ -14,10 +19,19 @@ function formatRange(start: string, end: string): string {
   return `${s.toLocaleDateString('en-US', opts)} – ${e.toLocaleDateString('en-US', { ...opts, year: 'numeric' })}`;
 }
 
-export function PerformancePanel() {
-  const { loading, error, data } = usePredictionAccuracy();
+export function PerformancePanel({
+  accuracySeed,
+}: {
+  accuracySeed?: PredictionAccuracy;
+}) {
+  useEffect(() => {
+    if (accuracySeed) setAccuracyCache(accuracySeed);
+  }, [accuracySeed]);
 
-  if (loading) {
+  const { loading, error, data } = usePredictionAccuracy();
+  const stats = data ?? accuracySeed;
+
+  if (loading && !stats) {
     return (
       <section className="card-professional p-6" aria-busy="true">
         <div className="flex items-center justify-center gap-3 py-12 text-muted-foreground">
@@ -28,7 +42,7 @@ export function PerformancePanel() {
     );
   }
 
-  if (error || !data) {
+  if ((error && !stats) || !stats) {
     return (
       <section className="card-professional p-6">
         <p className="text-destructive">
@@ -38,8 +52,8 @@ export function PerformancePanel() {
     );
   }
 
-  const week = data.week;
-  const month = data.month;
+  const week = stats.week;
+  const month = stats.month;
 
   return (
     <section className="card-professional p-6">

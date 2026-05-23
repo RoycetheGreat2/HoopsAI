@@ -2,9 +2,16 @@ import { useMemo } from 'react';
 import { TrendingUp, Target } from 'lucide-react';
 import {
   usePredictionAccuracy,
+  tallyFinishedInRange,
+  resolvedTimeZone,
+  localYmd,
+  addDaysYmd,
+  clampYmd,
   type WeeklyPredictions,
   type GamePrediction,
+  type AccuracyWindow,
 } from '@/hooks/useApi';
+import { TRACKING_SINCE } from '@/config';
 
 interface RightSidebarProps {
   predictions: WeeklyPredictions | null;
@@ -14,8 +21,34 @@ function confidencePct(g: GamePrediction): number {
   return Math.max(g.away_win_probability, g.home_win_probability) * 100;
 }
 
+function formatWeekCorrect(
+  weekAcc: AccuracyWindow | undefined,
+  predictions: WeeklyPredictions | null
+): string {
+  if (weekAcc && weekAcc.total > 0 && weekAcc.accuracy != null) {
+    return `${(weekAcc.accuracy * 100).toFixed(1)}% (${weekAcc.correct}/${weekAcc.total})`;
+  }
+  const today = localYmd();
+  const weekStart = clampYmd(addDaysYmd(today, -6), TRACKING_SINCE, today);
+  const fromPayload = tallyFinishedInRange(
+    predictions,
+    resolvedTimeZone(),
+    TRACKING_SINCE,
+    weekStart,
+    today
+  );
+  if (fromPayload.total > 0 && fromPayload.accuracy != null) {
+    return `${(fromPayload.accuracy * 100).toFixed(1)}% (${fromPayload.correct}/${fromPayload.total})`;
+  }
+  if (weekAcc && weekAcc.total === 0) return 'No finished games yet';
+  return '—';
+}
+
 export function RightSidebar({ predictions }: RightSidebarProps) {
-  const { data: accuracy } = usePredictionAccuracy();
+  const { data: accuracy } = usePredictionAccuracy({
+    enabled: !predictions?.accuracy,
+  });
+  const weekAcc = predictions?.accuracy?.week ?? accuracy?.week;
 
   const { gameCount, topConfidence } = useMemo(() => {
     const games: GamePrediction[] = [];
@@ -33,13 +66,7 @@ export function RightSidebar({ predictions }: RightSidebarProps) {
     };
   }, [predictions]);
 
-  const weekAcc = accuracy?.week;
-  const weekLabel =
-    weekAcc && weekAcc.total > 0 && weekAcc.accuracy != null
-      ? `${(weekAcc.accuracy * 100).toFixed(1)}% (${weekAcc.correct}/${weekAcc.total})`
-      : weekAcc && weekAcc.total === 0
-        ? 'No finished games yet'
-        : '—';
+  const weekLabel = formatWeekCorrect(weekAcc, predictions);
 
   return (
     <div className="space-y-6">

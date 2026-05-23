@@ -30,6 +30,7 @@ export interface WeeklyPredictions {
   week_end: string;
   tracking_since?: string;
   days: DayData[];
+  accuracy?: PredictionAccuracy;
 }
 
 export interface AccuracyWindow {
@@ -161,6 +162,45 @@ export function useHealth(pollMs = 30_000) {
   return { phase, message };
 }
 
+const ACCURACY_CACHE_TTL_MS = 90_000;
+let accuracyCache: { data: PredictionAccuracy; at: number } | null = null;
+
+export function setAccuracyCache(data: PredictionAccuracy | undefined) {
+  if (data) accuracyCache = { data, at: Date.now() };
+}
+
+export function getAccuracyCache(): PredictionAccuracy | null {
+  if (!accuracyCache) return null;
+  if (Date.now() - accuracyCache.at > ACCURACY_CACHE_TTL_MS) return null;
+  return accuracyCache.data;
+}
+
+/** Count finished games in payload for a calendar date range (fallback when DB empty). */
+export function tallyFinishedInRange(
+  payload: WeeklyPredictions | null,
+  timeZone: string,
+  since: string,
+  startYmd: string,
+  endYmd: string
+): AccuracyWindow {
+  const games = iterateFinishedGames(payload, timeZone, since).filter(
+    (g) =>
+      compareYmd(g.localDate, startYmd) >= 0 &&
+      compareYmd(g.localDate, endYmd) <= 0
+  );
+  const total = games.length;
+  const correct = games.filter(
+    (g) => g.predicted_winner === g.actual_winner
+  ).length;
+  return {
+    start: startYmd,
+    end: endYmd,
+    correct,
+    total,
+    accuracy: total > 0 ? correct / total : null,
+  };
+}
+
 export function useWeeklyPredictions(weekStart?: string) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -180,7 +220,10 @@ export function useWeeklyPredictions(weekStart?: string) {
           `/api/weekly-predictions${qs}`,
           120000
         );
-        if (!cancelled) setData(res);
+        if (!cancelled) {
+          setData(res);
+          if (res.accuracy) setAccuracyCache(res.accuracy);
+        }
       } catch (e: unknown) {
         if (!cancelled) {
           setError(
@@ -199,24 +242,39 @@ export function useWeeklyPredictions(weekStart?: string) {
   return { loading, error, data, retry };
 }
 
-export function usePredictionAccuracy() {
-  const [loading, setLoading] = useState(true);
+export function usePredictionAccuracy(options?: { enabled?: boolean }) {
+  const enabled = options?.enabled !== false;
+  const cached = getAccuracyCache();
+  const [loading, setLoading] = useState(enabled && !cached);
   const [error, setError] = useState<string | null>(null);
-  const [data, setData] = useState<PredictionAccuracy | null>(null);
+  const [data, setData] = useState<PredictionAccuracy | null>(cached);
 
   useEffect(() => {
+    if (!enabled) return;
     let cancelled = false;
-    (async () => {
-      setLoading(true);
+    const hit = getAccuracyCache();
+    if (hit) {
+      setData(hit);
+      setLoading(false);
       setError(null);
+    }
+    (async () => {
+      if (!hit) {
+        setLoading(true);
+        setError(null);
+      }
       try {
         const res = await apiFetch<PredictionAccuracy>(
           '/api/prediction-accuracy',
-          12000
+          30000
         );
-        if (!cancelled) setData(res);
-      } catch (e: unknown) {
         if (!cancelled) {
+          setData(res);
+          setAccuracyCache(res);
+          setError(null);
+        }
+      } catch (e: unknown) {
+        if (!cancelled && !getAccuracyCache()) {
           setError(
             e instanceof Error
               ? e.message
@@ -231,7 +289,7 @@ export function usePredictionAccuracy() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [enabled]);
 
   return { loading, error, data };
 }

@@ -456,6 +456,8 @@ def predictions():
 
 _WEEKLY_CACHE: dict[str, tuple[float, list[dict]]] = {}
 _WEEKLY_CACHE_TTL_SEC = int(os.environ.get("WEEKLY_CACHE_TTL_SEC", "180"))
+_ACCURACY_CACHE: tuple[float, dict] | None = None
+_ACCURACY_CACHE_TTL_SEC = int(os.environ.get("ACCURACY_CACHE_TTL_SEC", "90"))
 
 
 def _parse_week_start_param(raw: str | None) -> date:
@@ -536,6 +538,8 @@ def weekly_predictions():
 
     try:
         sync_prediction_tracker_from_weekly(days_out)
+        global _ACCURACY_CACHE
+        _ACCURACY_CACHE = None
     except Exception as e:
         print(f"Warning: prediction sync failed ({e})")
     try:
@@ -543,18 +547,64 @@ def weekly_predictions():
     except Exception as e:
         print(f"Warning: playoff sync failed ({e})")
 
+    accuracy = _build_accuracy_payload()
+
     return jsonify(
         {
             "week_start": week_start.isoformat(),
             "week_end": week_end.isoformat(),
             "tracking_since": MIN_TRACK_DATE.isoformat(),
             "days": days_out,
+            "accuracy": accuracy,
         }
     )
 
 
-@app.get("/api/prediction-accuracy")
-def prediction_accuracy():
+def _accuracy_tally(start: date, end: date) -> dict:
+    if _database_enabled():
+        from db import get_cursor
+
+        with get_cursor() as cur:
+            cur.execute(
+                """
+                SELECT
+                    COUNT(*)::int AS total,
+                    COALESCE(SUM(CASE WHEN correct THEN 1 ELSE 0 END), 0)::int AS correct
+                FROM predictions
+                WHERE game_date BETWEEN %s AND %s
+                  AND actual_winner IS NOT NULL
+                """,
+                (start.isoformat(), end.isoformat()),
+            )
+            row = cur.fetchone()
+            total = row[0] or 0
+            correct = row[1] or 0
+    else:
+        tracker = load_prediction_tracker()
+        subset = [
+            g
+            for g in (tracker.get("games") or [])
+            if g.get("actual_winner")
+            and start.isoformat() <= (g.get("date") or "") <= end.isoformat()
+        ]
+        total = len(subset)
+        correct = sum(1 for g in subset if g.get("correct") is True)
+    acc = (correct / total) if total else None
+    return {
+        "start": start.isoformat(),
+        "end": end.isoformat(),
+        "correct": correct,
+        "total": total,
+        "accuracy": acc,
+    }
+
+
+def _build_accuracy_payload() -> dict:
+    global _ACCURACY_CACHE
+    now = time.time()
+    if _ACCURACY_CACHE and now - _ACCURACY_CACHE[0] < _ACCURACY_CACHE_TTL_SEC:
+        return _ACCURACY_CACHE[1]
+
     today = date.today()
     week_start = today - timedelta(days=6)
     if week_start < MIN_TRACK_DATE:
@@ -563,58 +613,19 @@ def prediction_accuracy():
     if month_start < MIN_TRACK_DATE:
         month_start = MIN_TRACK_DATE
 
-    def tally(start: date, end: date) -> dict:
-        if _database_enabled():
-            from db import get_cursor
+    payload = {
+        "tracking_since": MIN_TRACK_DATE.isoformat(),
+        "storage": "postgres" if _database_enabled() else "json",
+        "week": _accuracy_tally(week_start, today),
+        "month": _accuracy_tally(month_start, today),
+    }
+    _ACCURACY_CACHE = (now, payload)
+    return payload
 
-            with get_cursor() as cur:
-                cur.execute(
-                    """
-                    SELECT
-                        COUNT(*)::int AS total,
-                        COALESCE(SUM(CASE WHEN correct THEN 1 ELSE 0 END), 0)::int AS correct
-                    FROM predictions
-                    WHERE game_date >= %s
-                      AND game_date BETWEEN %s AND %s
-                      AND actual_winner IS NOT NULL
-                    """,
-                    (MIN_TRACK_DATE.isoformat(), start.isoformat(), end.isoformat()),
-                )
-                row = cur.fetchone()
-                total = row[0] or 0
-                correct = row[1] or 0
-        else:
-            tracker = load_prediction_tracker()
-            games = [
-                g
-                for g in (tracker.get("games") or [])
-                if (g.get("date") or "") >= MIN_TRACK_DATE.isoformat()
-                and g.get("actual_winner")
-            ]
-            subset = [
-                g
-                for g in games
-                if start.isoformat() <= (g.get("date") or "") <= end.isoformat()
-            ]
-            total = len(subset)
-            correct = sum(1 for g in subset if g.get("correct") is True)
-        acc = (correct / total) if total else None
-        return {
-            "start": start.isoformat(),
-            "end": end.isoformat(),
-            "correct": correct,
-            "total": total,
-            "accuracy": acc,
-        }
 
-    return jsonify(
-        {
-            "tracking_since": MIN_TRACK_DATE.isoformat(),
-            "storage": "postgres" if _database_enabled() else "json",
-            "week": tally(week_start, today),
-            "month": tally(month_start, today),
-        }
-    )
+@app.get("/api/prediction-accuracy")
+def prediction_accuracy():
+    return jsonify(_build_accuracy_payload())
 
 
 @app.get("/api/playoff-stats")
