@@ -6,6 +6,7 @@ import {
   addDaysYmd,
   compareYmd,
   clampYmd,
+  epochWeekStart,
 } from '@/hooks/useApi';
 import { TRACKING_SINCE } from '@/config';
 
@@ -31,10 +32,9 @@ interface WeekDateCarouselProps {
   onDateChange: (date: string) => void;
   viewWeekStart: string;
   onViewWeekStartChange: (start: string) => void;
-  /** Last selectable day (inclusive), e.g. today + 6 */
-  maxSelectableDate: string;
-  /** Latest epoch week start (aligned 7-day blocks from TRACKING_SINCE) */
+  minEpochWeekStart: string;
   maxEpochWeekStart: string;
+  maxSelectableDate: string;
 }
 
 function toYmd(d: Date): string {
@@ -51,21 +51,23 @@ export function WeekDateCarousel({
   onDateChange,
   viewWeekStart,
   onViewWeekStartChange,
-  maxSelectableDate,
+  minEpochWeekStart,
   maxEpochWeekStart,
+  maxSelectableDate,
 }: WeekDateCarouselProps) {
   const [pickerOpen, setPickerOpen] = useState(false);
   const pickerRef = useRef<HTMLDivElement>(null);
   const today = localYmd();
 
+  const weekStart = epochWeekStart(viewWeekStart, TRACKING_SINCE);
   const anchorDate = parseYmd(
-    clampYmd(viewWeekStart, TRACKING_SINCE, maxSelectableDate)
+    clampYmd(weekStart, minEpochWeekStart, maxEpochWeekStart)
   );
   const pickerYear = anchorDate.getFullYear();
   const pickerMonth = anchorDate.getMonth();
 
   const weekDates = useMemo(() => {
-    const start = parseYmd(viewWeekStart);
+    const start = parseYmd(weekStart);
     const dates: Date[] = [];
     for (let i = 0; i < 7; i++) {
       const d = new Date(start);
@@ -73,26 +75,26 @@ export function WeekDateCarousel({
       dates.push(d);
     }
     return dates;
-  }, [viewWeekStart]);
+  }, [weekStart]);
 
   const monthLabel = anchorDate.toLocaleDateString('en-US', {
     month: 'long',
     year: 'numeric',
   });
 
-  const canGoPrev = compareYmd(viewWeekStart, TRACKING_SINCE) > 0;
-  const canGoNext = compareYmd(addDaysYmd(viewWeekStart, 7), maxEpochWeekStart) <= 0;
+  const canGoPrev = compareYmd(weekStart, minEpochWeekStart) > 0;
+  const canGoNext = compareYmd(addDaysYmd(weekStart, 7), maxEpochWeekStart) <= 0;
 
   const yearOptions = useMemo(() => {
-    const minY = parseYmd(TRACKING_SINCE).getFullYear();
+    const minY = parseYmd(minEpochWeekStart).getFullYear();
     const maxY = parseYmd(maxSelectableDate).getFullYear();
     const years: number[] = [];
     for (let y = minY; y <= maxY; y++) years.push(y);
     return years;
-  }, [maxSelectableDate]);
+  }, [minEpochWeekStart, maxSelectableDate]);
 
   const availableMonths = useMemo(() => {
-    const min = parseYmd(TRACKING_SINCE);
+    const min = parseYmd(minEpochWeekStart);
     const max = parseYmd(maxSelectableDate);
     const months: number[] = [];
     for (let m = 0; m < 12; m++) {
@@ -102,7 +104,7 @@ export function WeekDateCarousel({
       months.push(m);
     }
     return months;
-  }, [pickerYear, maxSelectableDate]);
+  }, [pickerYear, minEpochWeekStart, maxSelectableDate]);
 
   useEffect(() => {
     function onDocClick(e: MouseEvent) {
@@ -115,48 +117,36 @@ export function WeekDateCarousel({
   }, [pickerOpen]);
 
   function shiftWeek(delta: number) {
-    const next = addDaysYmd(viewWeekStart, delta * 7);
-    const clamped = clampYmd(next, TRACKING_SINCE, maxEpochWeekStart);
+    const next = addDaysYmd(weekStart, delta * 7);
+    const clamped = clampYmd(next, minEpochWeekStart, maxEpochWeekStart);
     onViewWeekStartChange(clamped);
+    const weekEnd = addDaysYmd(clamped, 6);
     if (compareYmd(selectedDate, clamped) < 0) {
       onDateChange(clampYmd(clamped, TRACKING_SINCE, maxSelectableDate));
-    } else if (compareYmd(selectedDate, addDaysYmd(clamped, 6)) > 0) {
-      onDateChange(
-        clampYmd(addDaysYmd(clamped, 6), TRACKING_SINCE, maxSelectableDate)
-      );
+    } else if (compareYmd(selectedDate, weekEnd) > 0) {
+      onDateChange(clampYmd(weekEnd, TRACKING_SINCE, maxSelectableDate));
     }
   }
 
   function applyMonthYear(year: number, monthIndex: number) {
-    let start = firstDayOfMonthYmd(year, monthIndex);
-    if (compareYmd(start, TRACKING_SINCE) < 0) start = TRACKING_SINCE;
-    const monthEnd = addDaysYmd(
-      firstDayOfMonthYmd(
-        monthIndex === 11 ? year + 1 : year,
-        monthIndex === 11 ? 0 : monthIndex + 1
-      ),
-      -1
+    let probe = firstDayOfMonthYmd(year, monthIndex);
+    if (compareYmd(probe, minEpochWeekStart) < 0) probe = minEpochWeekStart;
+    if (compareYmd(probe, maxSelectableDate) > 0) probe = maxSelectableDate;
+    const start = clampYmd(
+      epochWeekStart(probe, TRACKING_SINCE),
+      minEpochWeekStart,
+      maxEpochWeekStart
     );
-    if (
-      compareYmd(today, start) >= 0 &&
-      compareYmd(today, monthEnd) <= 0
-    ) {
-      start = clampYmd(
-        addDaysYmd(today, -((parseYmd(today).getDay() + 7) % 7)),
-        TRACKING_SINCE,
-        maxEpochWeekStart
-      );
-    }
-    start = clampYmd(start, TRACKING_SINCE, maxEpochWeekStart);
     onViewWeekStartChange(start);
-    const pick =
-      compareYmd(selectedDate, start) >= 0 &&
-      compareYmd(selectedDate, addDaysYmd(start, 6)) <= 0
-        ? selectedDate
-        : compareYmd(today, start) >= 0 &&
-            compareYmd(today, addDaysYmd(start, 6)) <= 0
-          ? clampYmd(today, TRACKING_SINCE, maxSelectableDate)
-          : clampYmd(start, TRACKING_SINCE, maxSelectableDate);
+    const weekEnd = addDaysYmd(start, 6);
+    let pick = selectedDate;
+    if (compareYmd(pick, start) < 0 || compareYmd(pick, weekEnd) > 0) {
+      if (compareYmd(today, start) >= 0 && compareYmd(today, weekEnd) <= 0) {
+        pick = clampYmd(today, TRACKING_SINCE, maxSelectableDate);
+      } else {
+        pick = clampYmd(start, TRACKING_SINCE, maxSelectableDate);
+      }
+    }
     onDateChange(pick);
     setPickerOpen(false);
   }

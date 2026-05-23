@@ -54,7 +54,10 @@ from week_epoch import (
     epoch_week_end,
     is_current_epoch_week,
     max_epoch_week_start,
+    schedule_max_date,
 )
+
+SCHEDULE_AHEAD_DAYS = int(os.environ.get("SCHEDULE_AHEAD_DAYS", "30"))
 
 PREDICTIONS_FILE_RE = re.compile(
     r"^live_predictions_(\d{4}-\d{2}-\d{2})\.json$"
@@ -472,6 +475,7 @@ def predictions():
 
 
 _WEEKLY_CACHE: dict[str, tuple[float, list[dict]]] = {}
+_WEEKLY_PAYLOAD_CACHE: dict[str, tuple[float, dict]] = {}
 _WEEKLY_CACHE_TTL_SEC = int(os.environ.get("WEEKLY_CACHE_TTL_SEC", "180"))
 _CURRENT_WEEK_CACHE_TTL_SEC = int(
     os.environ.get("CURRENT_WEEK_CACHE_TTL_SEC", "86400")
@@ -568,10 +572,46 @@ def _fetch_week_days(week_start: date) -> list[dict]:
     return days_out
 
 
+def _schedule_bounds(today: date | None = None) -> dict:
+    today = today or date.today()
+    max_d = schedule_max_date(today, SCHEDULE_AHEAD_DAYS)
+    max_epoch = max_epoch_week_start(today, MIN_TRACK_DATE, SCHEDULE_AHEAD_DAYS)
+    return {
+        "min_date": MIN_TRACK_DATE.isoformat(),
+        "max_date": max_d.isoformat(),
+        "max_epoch_week_start": max_epoch.isoformat(),
+    }
+
+
+def _weekly_payload_cache_get(week_start: date) -> dict | None:
+    key = week_start.isoformat()
+    now = time.time()
+    cached = _WEEKLY_PAYLOAD_CACHE.get(key)
+    if not cached:
+        return None
+    ttl = _weekly_cache_ttl_sec(week_start)
+    if now - cached[0] >= ttl:
+        return None
+    return cached[1]
+
+
+def _weekly_payload_cache_set(week_start: date, payload: dict) -> None:
+    _WEEKLY_PAYLOAD_CACHE[week_start.isoformat()] = (time.time(), payload)
+
+
 @app.get("/api/weekly-predictions")
 def weekly_predictions():
     _ensure_current_epoch_week_cached()
+    today = date.today()
     week_start = _parse_week_start_param(request.args.get("start"))
+    max_epoch = max_epoch_week_start(today, MIN_TRACK_DATE, SCHEDULE_AHEAD_DAYS)
+    if week_start > max_epoch:
+        week_start = max_epoch
+
+    cached_payload = _weekly_payload_cache_get(week_start)
+    if cached_payload is not None:
+        return jsonify(cached_payload)
+
     week_end = epoch_week_end(week_start)
     days_out = _fetch_week_days(week_start)
 
@@ -588,18 +628,18 @@ def weekly_predictions():
 
     accuracy = _build_accuracy_payload()
 
-    today = date.today()
-    return jsonify(
-        {
-            "week_start": week_start.isoformat(),
-            "week_end": week_end.isoformat(),
-            "tracking_since": MIN_TRACK_DATE.isoformat(),
-            "current_epoch_week_start": epoch_week_start(today, MIN_TRACK_DATE).isoformat(),
-            "is_current_epoch_week": is_current_epoch_week(week_start, today),
-            "days": days_out,
-            "accuracy": accuracy,
-        }
-    )
+    payload = {
+        "week_start": week_start.isoformat(),
+        "week_end": week_end.isoformat(),
+        "tracking_since": MIN_TRACK_DATE.isoformat(),
+        "schedule": _schedule_bounds(today),
+        "current_epoch_week_start": epoch_week_start(today, MIN_TRACK_DATE).isoformat(),
+        "is_current_epoch_week": is_current_epoch_week(week_start, today),
+        "days": days_out,
+        "accuracy": accuracy,
+    }
+    _weekly_payload_cache_set(week_start, payload)
+    return jsonify(payload)
 
 
 def _accuracy_tally(start: date, end: date) -> dict:

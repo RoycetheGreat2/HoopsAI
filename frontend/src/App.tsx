@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { WeekDateCarousel } from './components/hoops/WeekDateCarousel';
 import { GameCard } from './components/hoops/GameCard';
 import { RightSidebar } from './components/hoops/RightSidebar';
@@ -10,18 +10,15 @@ import {
   localYmd,
   clampYmd,
   compareYmd,
-  addDaysYmd,
   epochWeekStart,
   maxEpochWeekStart,
+  maxSelectableDate,
+  prefetchCurrentEpochWeek,
 } from './hooks/useApi';
 import { TRACKING_SINCE } from './config';
 import { Loader2, AlertTriangle, RefreshCw } from 'lucide-react';
 
 const HERO_IMAGE = '/images/court-hero.jpg';
-
-function maxSelectableDate(today: string): string {
-  return addDaysYmd(today, 6);
-}
 
 /** Current 7-day epoch from tracking anchor (May 22–28, then May 29–Jun 4, …). */
 function initialWeekStart(today: string): string {
@@ -31,6 +28,11 @@ function initialWeekStart(today: string): string {
 export default function App() {
   const today = localYmd();
   const maxDate = maxSelectableDate(today);
+  const maxWeekStart = maxEpochWeekStart(today, TRACKING_SINCE);
+
+  useEffect(() => {
+    prefetchCurrentEpochWeek();
+  }, []);
   const [viewWeekStart, setViewWeekStart] = useState(() => initialWeekStart(today));
   const [selectedDate, setSelectedDate] = useState(() =>
     clampYmd(today, TRACKING_SINCE, maxDate)
@@ -75,7 +77,8 @@ export default function App() {
             setSelectedDate(clampYmd(d, TRACKING_SINCE, maxDate))
           }
           maxSelectableDate={maxDate}
-          maxEpochWeekStart={maxEpochWeekStart(today, TRACKING_SINCE)}
+          minEpochWeekStart={TRACKING_SINCE}
+          maxEpochWeekStart={maxWeekStart}
           viewWeekStart={viewWeekStart}
           onViewWeekStartChange={(start) =>
             setViewWeekStart(epochWeekStart(start, TRACKING_SINCE))

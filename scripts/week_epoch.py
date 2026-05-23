@@ -25,6 +25,14 @@ def is_current_epoch_week(week_start: date, today: date | None = None) -> bool:
     return week_start == epoch_week_start(today)
 
 
-def max_epoch_week_start(today: date, anchor: date = DEFAULT_ANCHOR) -> date:
+def max_epoch_week_start(
+    today: date,
+    anchor: date = DEFAULT_ANCHOR,
+    ahead_days: int = 30,
+) -> date:
     """Latest epoch start that still fits the forward-looking schedule window."""
-    return epoch_week_start(today + timedelta(days=6), anchor)
+    return epoch_week_start(today + timedelta(days=ahead_days), anchor)
+
+
+def schedule_max_date(today: date, ahead_days: int = 30) -> date:
+    return today + timedelta(days=ahead_days)

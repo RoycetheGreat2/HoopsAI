@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { TRACKING_SINCE } from '@/config';
+import { TRACKING_SINCE, SCHEDULE_AHEAD_DAYS } from '@/config';
 
 /* ------------------------------------------------------------------ */
 /*  Types matching Flask API responses from app.py                    */
@@ -32,6 +32,11 @@ export interface WeeklyPredictions {
   tracking_since?: string;
   current_epoch_week_start?: string;
   is_current_epoch_week?: boolean;
+  schedule?: {
+    min_date: string;
+    max_date: string;
+    max_epoch_week_start: string;
+  };
   days: DayData[];
   accuracy?: PredictionAccuracy;
 }
@@ -220,19 +225,15 @@ export function useWeeklyPredictions(weekStart?: string) {
       : epochWeekStart(today, TRACKING_SINCE);
     const isCurrent = isCurrentEpochWeek(effectiveStart, today, TRACKING_SINCE);
 
-    if (isCurrent) {
-      const cached = loadWeekFromStorage(effectiveStart);
-      if (cached) {
-        setData(cached);
-        if (cached.accuracy) setAccuracyCache(cached.accuracy);
-        setLoading(false);
-      }
+    const cached = loadWeekFromStorage(effectiveStart, isCurrent);
+    if (cached) {
+      setData(cached);
+      if (cached.accuracy) setAccuracyCache(cached.accuracy);
+      setLoading(false);
     }
 
     (async () => {
-      if (!isCurrent || !loadWeekFromStorage(effectiveStart)) {
-        setLoading(true);
-      }
+      if (!cached) setLoading(true);
       setError(null);
       try {
         const qs = `?start=${encodeURIComponent(effectiveStart)}`;
@@ -246,7 +247,7 @@ export function useWeeklyPredictions(weekStart?: string) {
           if (res.accuracy) setAccuracyCache(res.accuracy);
         }
       } catch (e: unknown) {
-        if (!cancelled) {
+        if (!cancelled && !loadWeekFromStorage(effectiveStart, isCurrent)) {
           setError(
             e instanceof Error ? e.message : 'Something went wrong loading this week.'
           );
@@ -261,6 +262,22 @@ export function useWeeklyPredictions(weekStart?: string) {
   }, [retryKey, weekStart]);
 
   return { loading, error, data, retry };
+}
+
+/** Prefetch and cache the current epoch week (e.g. on app load). */
+export function prefetchCurrentEpochWeek(): void {
+  const today = localYmd();
+  const start = epochWeekStart(today, TRACKING_SINCE);
+  if (loadWeekFromStorage(start, true)) return;
+  apiFetch<WeeklyPredictions>(
+    `/api/weekly-predictions?start=${encodeURIComponent(start)}`,
+    120000
+  )
+    .then((res) => {
+      saveWeekToStorage(res);
+      if (res.accuracy) setAccuracyCache(res.accuracy);
+    })
+    .catch(() => {});
 }
 
 export function usePredictionAccuracy(options?: { enabled?: boolean }) {
@@ -415,8 +432,19 @@ export function epochWeekEnd(weekStart: string): string {
   return addDaysYmd(weekStart, 6);
 }
 
-export function maxEpochWeekStart(today: string, since: string): string {
-  return epochWeekStart(addDaysYmd(today, 6), since);
+export function maxSelectableDate(today: string = localYmd()): string {
+  return addDaysYmd(today, SCHEDULE_AHEAD_DAYS);
+}
+
+export function maxEpochWeekStart(
+  today: string = localYmd(),
+  since: string = TRACKING_SINCE
+): string {
+  return epochWeekStart(maxSelectableDate(today), since);
+}
+
+export function minEpochWeekStart(since: string = TRACKING_SINCE): string {
+  return since;
 }
 
 export function isCurrentEpochWeek(weekStart: string, today: string, since: string): boolean {
@@ -424,26 +452,34 @@ export function isCurrentEpochWeek(weekStart: string, today: string, since: stri
 }
 
 const WEEK_STORAGE_PREFIX = 'hoopsai-week-v1:';
+const WEEK_LOCAL_PREFIX = 'hoopsai-week-local-v1:';
 
-function loadWeekFromStorage(weekStart: string): WeeklyPredictions | null {
+function loadWeekFromStorage(weekStart: string, preferLocal = false): WeeklyPredictions | null {
+  const key = WEEK_STORAGE_PREFIX + weekStart;
+  const localKey = WEEK_LOCAL_PREFIX + weekStart;
   try {
-    const raw = sessionStorage.getItem(WEEK_STORAGE_PREFIX + weekStart);
-    if (!raw) return null;
-    return JSON.parse(raw) as WeeklyPredictions;
+    if (preferLocal) {
+      const local = localStorage.getItem(localKey);
+      if (local) return JSON.parse(local) as WeeklyPredictions;
+    }
+    const raw = sessionStorage.getItem(key);
+    if (raw) return JSON.parse(raw) as WeeklyPredictions;
+    const local = localStorage.getItem(localKey);
+    if (local) return JSON.parse(local) as WeeklyPredictions;
+    return null;
   } catch {
     return null;
   }
 }
 
 function saveWeekToStorage(data: WeeklyPredictions): void {
+  const serialized = JSON.stringify(data);
+  const key = WEEK_STORAGE_PREFIX + data.week_start;
   try {
-    sessionStorage.setItem(
-      WEEK_STORAGE_PREFIX + data.week_start,
-      JSON.stringify(data)
-    );
-    const current = data.current_epoch_week_start;
-    if (current && current === data.week_start) {
-      sessionStorage.setItem(WEEK_STORAGE_PREFIX + '_current', data.week_start);
+    sessionStorage.setItem(key, serialized);
+    if (data.is_current_epoch_week) {
+      localStorage.setItem(WEEK_LOCAL_PREFIX + data.week_start, serialized);
+      localStorage.setItem(WEEK_LOCAL_PREFIX + '_current', data.week_start);
     }
   } catch {
     /* quota / private mode */
