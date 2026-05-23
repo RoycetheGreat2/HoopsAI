@@ -8,8 +8,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY app.py Procfile ./
 COPY models/ models/
 COPY data/nba_games_features.csv data/nba_games_features.csv
-COPY data/prediction_tracker.json data/prediction_tracker.json
 COPY scripts/ scripts/
+
+RUN mkdir -p /app/data
 
 ENV PORT=8080
 EXPOSE 8080

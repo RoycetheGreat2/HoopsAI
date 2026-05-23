@@ -15,7 +15,13 @@ from psycopg2.extras import RealDictCursor
 
 
 def database_enabled() -> bool:
-    return bool(os.environ.get("DATABASE_URL", "").strip())
+    url = os.environ.get("DATABASE_URL", "").strip()
+    if not url:
+        return False
+    # Ignore copied .env.example placeholders
+    if "YOUR_PROJECT" in url or "YOUR_PASSWORD" in url:
+        return False
+    return True
 
 
 def get_connection():

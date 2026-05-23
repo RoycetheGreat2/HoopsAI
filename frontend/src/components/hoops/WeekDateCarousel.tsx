@@ -78,7 +78,7 @@ export function WeekDateCarousel({
   });
 
   const maxWeekStart = addDaysYmd(maxSelectableDate, -6);
-  const canGoPrev = compareYmd(addDaysYmd(viewWeekStart, -7), TRACKING_SINCE) >= 0;
+  const canGoPrev = compareYmd(viewWeekStart, TRACKING_SINCE) > 0;
   const canGoNext = compareYmd(addDaysYmd(viewWeekStart, 7), maxWeekStart) <= 0;
 
   const yearOptions = useMemo(() => {

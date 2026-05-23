@@ -174,12 +174,11 @@ export function useWeeklyPredictions(weekStart?: string) {
     (async () => {
       setLoading(true);
       setError(null);
-      setData(null);
       try {
         const qs = weekStart ? `?start=${encodeURIComponent(weekStart)}` : '';
         const res = await apiFetch<WeeklyPredictions>(
           `/api/weekly-predictions${qs}`,
-          60000
+          120000
         );
         if (!cancelled) setData(res);
       } catch (e: unknown) {
@@ -316,6 +315,13 @@ export function addDaysYmd(ymd: string, days: number): string {
 
 export function compareYmd(a: string, b: string): number {
   return a.localeCompare(b);
+}
+
+/** Inclusive day count from `from` to `to` (to >= from). */
+export function daysBetweenYmd(from: string, to: string): number {
+  const a = parseYmd(from);
+  const b = parseYmd(to);
+  return Math.round((b.getTime() - a.getTime()) / 86_400_000);
 }
 
 /** Clamp date to [since, maxYmd] (maxYmd defaults to today). */

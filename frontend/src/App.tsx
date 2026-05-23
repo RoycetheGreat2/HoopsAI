@@ -11,6 +11,7 @@ import {
   clampYmd,
   compareYmd,
   addDaysYmd,
+  daysBetweenYmd,
 } from './hooks/useApi';
 import { TRACKING_SINCE } from './config';
 import { Loader2, AlertTriangle, RefreshCw } from 'lucide-react';
@@ -21,10 +22,14 @@ function maxSelectableDate(today: string): string {
   return addDaysYmd(today, 6);
 }
 
+/** First day of the 7-day strip — keeps launch day visible for two weeks after tracking starts. */
 function initialWeekStart(today: string): string {
   const maxD = maxSelectableDate(today);
-  const anchor = compareYmd(today, TRACKING_SINCE) >= 0 ? today : TRACKING_SINCE;
-  return clampYmd(anchor, TRACKING_SINCE, maxD);
+  const maxWeekStart = addDaysYmd(maxD, -6);
+  if (daysBetweenYmd(TRACKING_SINCE, today) <= 13) {
+    return clampYmd(TRACKING_SINCE, TRACKING_SINCE, maxWeekStart);
+  }
+  return clampYmd(addDaysYmd(today, -6), TRACKING_SINCE, maxWeekStart);
 }
 
 export default function App() {

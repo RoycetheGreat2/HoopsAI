@@ -9,6 +9,8 @@ import json
 import os
 import re
 import sys
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
@@ -164,35 +166,45 @@ def _database_enabled() -> bool:
         return False
 
 
-def _iter_finished_games_from_weekly(days_out: list[dict]):
-    """Yield finished game records eligible for tracking."""
+def _game_date_from_rec(rec: dict, day_date: str) -> str | None:
+    utc = rec.get("utc_time")
+    if isinstance(utc, str) and len(utc) >= 10:
+        gdate = utc[:10]
+    else:
+        gdate = day_date[:10]
+    if not gdate or gdate < MIN_TRACK_DATE.isoformat():
+        return None
+    return gdate
+
+
+def _iter_trackable_games_from_weekly(days_out: list[dict]):
+    """Yield prediction records for all games on/after MIN_TRACK_DATE."""
     for day in days_out:
         day_date = (day.get("date") or "")[:10]
         for rec in day.get("games") or []:
-            if rec.get("status") != "post":
-                continue
-            actual = rec.get("actual_winner")
-            if actual is None:
-                continue
             home = rec.get("home")
             away = rec.get("away")
             if not home or not away:
                 continue
-            utc = rec.get("utc_time")
-            if isinstance(utc, str) and len(utc) >= 10:
-                gdate = utc[:10]
-            else:
-                gdate = day_date
-            if gdate < MIN_TRACK_DATE.isoformat():
+            gdate = _game_date_from_rec(rec, day_date)
+            if not gdate:
                 continue
             pred = rec.get("predicted_winner")
+            status = rec.get("status") or "pre"
+            actual = rec.get("actual_winner") if status == "post" else None
+            if status == "post" and actual is None:
+                continue
+            correct = None
+            if status == "post" and actual is not None:
+                correct = bool(pred == actual)
             yield {
                 "date": gdate,
                 "home": home,
                 "away": away,
                 "predicted_winner": pred,
                 "actual_winner": actual,
-                "correct": bool(pred == actual),
+                "correct": correct,
+                "status": status,
                 "home_win_probability": rec.get("home_win_probability"),
                 "away_win_probability": rec.get("away_win_probability"),
             }
@@ -203,13 +215,21 @@ def _sync_predictions_to_db(entries: list[dict]) -> None:
 
     with get_cursor() as cur:
         for e in entries:
+            correct_val = e["correct"]
+            if correct_val is None:
+                correct_val = False
             cur.execute(
                 """
                 INSERT INTO predictions (
                     game_date, home, away, predicted_winner, actual_winner,
                     correct, home_win_probability, away_win_probability
                 ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-                ON CONFLICT (game_date, home, away) DO NOTHING
+                ON CONFLICT (game_date, home, away) DO UPDATE SET
+                    predicted_winner = EXCLUDED.predicted_winner,
+                    actual_winner = EXCLUDED.actual_winner,
+                    correct = EXCLUDED.correct,
+                    home_win_probability = EXCLUDED.home_win_probability,
+                    away_win_probability = EXCLUDED.away_win_probability
                 """,
                 (
                     e["date"],
@@ -217,46 +237,40 @@ def _sync_predictions_to_db(entries: list[dict]) -> None:
                     e["away"],
                     e["predicted_winner"],
                     e["actual_winner"],
-                    e["correct"],
+                    correct_val,
                     e.get("home_win_probability"),
                     e.get("away_win_probability"),
                 ),
             )
 
 
-def sync_prediction_tracker_from_weekly(days_out: list[dict]) -> None:
-    new_entries: list[dict] = []
-    if _database_enabled():
-        from db import get_cursor
+def _upsert_json_tracker_games(tracker: dict, entries: list[dict]) -> None:
+    index: dict[tuple[str, str, str], int] = {
+        (g["date"], g["home"], g["away"]): i
+        for i, g in enumerate(tracker["games"])
+    }
+    for entry in entries:
+        key = (entry["date"], entry["home"], entry["away"])
+        row = {k: v for k, v in entry.items() if k != "status"}
+        if key in index:
+            existing = tracker["games"][index[key]]
+            tracker["games"][index[key]] = {**existing, **row}
+        else:
+            index[key] = len(tracker["games"])
+            tracker["games"].append(row)
 
-        with get_cursor() as cur:
-            cur.execute(
-                """
-                SELECT game_date::text, home, away
-                FROM predictions
-                WHERE game_date >= %s
-                """,
-                (MIN_TRACK_DATE.isoformat(),),
-            )
-            seen = {(r[0], r[1], r[2]) for r in cur.fetchall()}
-        for entry in _iter_finished_games_from_weekly(days_out):
-            key = (entry["date"], entry["home"], entry["away"])
-            if key in seen:
-                continue
-            new_entries.append(entry)
-            seen.add(key)
-        if new_entries:
-            _sync_predictions_to_db(new_entries)
+
+def sync_prediction_tracker_from_weekly(days_out: list[dict]) -> None:
+    entries = list(_iter_trackable_games_from_weekly(days_out))
+    if not entries:
+        return
+
+    if _database_enabled():
+        _sync_predictions_to_db(entries)
         return
 
     tracker = load_prediction_tracker()
-    seen = {(x["date"], x["home"], x["away"]) for x in tracker["games"]}
-    for entry in _iter_finished_games_from_weekly(days_out):
-        key = (entry["date"], entry["home"], entry["away"])
-        if key in seen:
-            continue
-        tracker["games"].append(entry)
-        seen.add(key)
+    _upsert_json_tracker_games(tracker, entries)
     save_prediction_tracker(tracker)
 
 
@@ -365,12 +379,45 @@ def latest_predictions_file() -> Path | None:
     return candidates[0][1]
 
 
+def _prediction_storage_mode() -> str:
+    if _database_enabled():
+        return "postgres"
+    try:
+        PREDICTION_TRACKER_PATH.parent.mkdir(parents=True, exist_ok=True)
+        test = PREDICTION_TRACKER_PATH.parent / ".write_test"
+        test.write_text("ok", encoding="utf-8")
+        test.unlink(missing_ok=True)
+        return "json"
+    except OSError:
+        return "ephemeral"
+
+
+def _database_health() -> dict:
+    if not _database_enabled():
+        return {"connected": False, "detail": "DATABASE_URL not configured"}
+    try:
+        from db import get_cursor
+
+        with get_cursor() as cur:
+            cur.execute(
+                "SELECT EXISTS (SELECT 1 FROM information_schema.tables "
+                "WHERE table_name = 'predictions')"
+            )
+            has_table = bool(cur.fetchone()[0])
+        return {"connected": True, "predictions_table": has_table}
+    except Exception as e:
+        return {"connected": False, "detail": str(e)}
+
+
 @app.get("/api/health")
 def health():
     return jsonify(
         {
             "status": "ok",
             "timestamp": datetime.now(timezone.utc).isoformat(),
+            "prediction_storage": _prediction_storage_mode(),
+            "tracking_since": MIN_TRACK_DATE.isoformat(),
+            "database": _database_health(),
         }
     )
 
@@ -407,6 +454,10 @@ def predictions():
     return jsonify(payload)
 
 
+_WEEKLY_CACHE: dict[str, tuple[float, list[dict]]] = {}
+_WEEKLY_CACHE_TTL_SEC = int(os.environ.get("WEEKLY_CACHE_TTL_SEC", "180"))
+
+
 def _parse_week_start_param(raw: str | None) -> date:
     today = date.today()
     if not raw:
@@ -420,41 +471,60 @@ def _parse_week_start_param(raw: str | None) -> date:
     return d
 
 
+def _fetch_single_day(d: date) -> dict | None:
+    if d < MIN_TRACK_DATE:
+        return None
+    ymd = d.strftime("%Y%m%d")
+    try:
+        resp = requests.get(
+            ESPN_SCOREBOARD_URL,
+            params={"dates": ymd},
+            timeout=15,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+    except Exception as e:
+        print(f"Warning: ESPN fetch failed for {d.isoformat()}: {e}")
+        return {"date": d.isoformat(), "games": []}
+
+    day_games: list[dict] = []
+    for event in data.get("events") or []:
+        utc_raw = event.get("date")
+        utc_time = utc_raw if isinstance(utc_raw, str) else None
+        games = _lp.parse_scoreboard_games({"events": [event]})
+        for g in games:
+            try:
+                rec = _prediction_record_from_tuple(g)
+                rec["utc_time"] = utc_time
+                day_games.append(rec)
+            except Exception as e:
+                print(
+                    f"Warning: skipping game {g[0]} @ {g[1]} on {d.isoformat()}: {e}"
+                )
+    return {"date": d.isoformat(), "games": day_games}
+
+
 def _fetch_week_days(week_start: date) -> list[dict]:
+    cache_key = week_start.isoformat()
+    now = time.time()
+    cached = _WEEKLY_CACHE.get(cache_key)
+    if cached and now - cached[0] < _WEEKLY_CACHE_TTL_SEC:
+        return cached[1]
+
+    dates = [week_start + timedelta(days=i) for i in range(7)]
     days_out: list[dict] = []
-    for offset in range(7):
-        d = week_start + timedelta(days=offset)
-        if d < MIN_TRACK_DATE:
-            continue
-        ymd = d.strftime("%Y%m%d")
-        try:
-            resp = requests.get(
-                ESPN_SCOREBOARD_URL,
-                params={"dates": ymd},
-                timeout=20,
-            )
-            resp.raise_for_status()
-            data = resp.json()
-        except Exception:
-            continue
+    with ThreadPoolExecutor(max_workers=7) as pool:
+        futures = {pool.submit(_fetch_single_day, d): d for d in dates}
+        by_date: dict[str, dict] = {}
+        for fut in as_completed(futures):
+            row = fut.result()
+            if row:
+                by_date[row["date"]] = row
+    for d in dates:
+        if d.isoformat() in by_date:
+            days_out.append(by_date[d.isoformat()])
 
-        day_games: list[dict] = []
-        for event in data.get("events") or []:
-            utc_raw = event.get("date")
-            utc_time = utc_raw if isinstance(utc_raw, str) else None
-            games = _lp.parse_scoreboard_games({"events": [event]})
-            for g in games:
-                try:
-                    rec = _prediction_record_from_tuple(g)
-                    rec["utc_time"] = utc_time
-                    day_games.append(rec)
-                except Exception as e:
-                    print(
-                        f"Warning: skipping game {g[0]} @ {g[1]} on {d.isoformat()}: {e}"
-                    )
-                    continue
-
-        days_out.append({"date": d.isoformat(), "games": day_games})
+    _WEEKLY_CACHE[cache_key] = (now, days_out)
     return days_out
 
 
@@ -464,8 +534,14 @@ def weekly_predictions():
     week_end = week_start + timedelta(days=6)
     days_out = _fetch_week_days(week_start)
 
-    sync_prediction_tracker_from_weekly(days_out)
-    sync_playoff_tracker_from_weekly(days_out)
+    try:
+        sync_prediction_tracker_from_weekly(days_out)
+    except Exception as e:
+        print(f"Warning: prediction sync failed ({e})")
+    try:
+        sync_playoff_tracker_from_weekly(days_out)
+    except Exception as e:
+        print(f"Warning: playoff sync failed ({e})")
 
     return jsonify(
         {
@@ -500,6 +576,7 @@ def prediction_accuracy():
                     FROM predictions
                     WHERE game_date >= %s
                       AND game_date BETWEEN %s AND %s
+                      AND actual_winner IS NOT NULL
                     """,
                     (MIN_TRACK_DATE.isoformat(), start.isoformat(), end.isoformat()),
                 )
@@ -512,6 +589,7 @@ def prediction_accuracy():
                 g
                 for g in (tracker.get("games") or [])
                 if (g.get("date") or "") >= MIN_TRACK_DATE.isoformat()
+                and g.get("actual_winner")
             ]
             subset = [
                 g
@@ -519,7 +597,7 @@ def prediction_accuracy():
                 if start.isoformat() <= (g.get("date") or "") <= end.isoformat()
             ]
             total = len(subset)
-            correct = sum(1 for g in subset if g.get("correct"))
+            correct = sum(1 for g in subset if g.get("correct") is True)
         acc = (correct / total) if total else None
         return {
             "start": start.isoformat(),

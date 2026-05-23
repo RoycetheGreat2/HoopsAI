@@ -30,4 +30,24 @@ Basketball-Reference (scraping)
   frontend/  (React + Vite)
 ```
 
+**Live predictions do not retrain the model.** The API loads a fixed `nba_model.pkl` and uses the latest row per team from `data/nba_games_features.csv` for rolling stats and ELO.
 
+---
+
+## Prediction tracking (persistence)
+
+Each visit to the Games tab calls `/api/weekly-predictions`, which **saves predictions** for that week (upcoming and finished games).
+
+**Accuracy stats survive redeploys only if:**
+
+1. **Supabase** — set a real `DATABASE_URL` on the API host, run `python scripts/setup_database.py`, then `python scripts/migrate_json_to_db.py`, or  
+2. **Fly.io volume** — `fly volumes create hoopsai_data -r iad -s 1` (see `fly.toml` mount at `/app/data`).
+
+Check **`GET /api/health`** — `prediction_storage` should be `postgres` or `json`, not `ephemeral`.
+
+### Health check URLs (do not use placeholders)
+
+| Environment | URL |
+|-------------|-----|
+| **Local API** (after `python app.py`) | http://127.0.0.1:5000/api/health |
+| **Production** | `https://hoopsai-api.onrender.com/api/health` (your Render API service) |

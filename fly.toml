@@ -20,3 +20,8 @@ primary_region = "iad"
   memory = "512mb"
   cpu_kind = "shared"
   cpus = 1
+
+# Persist prediction_tracker.json across deploys (create once: fly volumes create hoopsai_data -r iad -s 1)
+[mounts]
+  source = "hoopsai_data"
+  destination = "/app/data"

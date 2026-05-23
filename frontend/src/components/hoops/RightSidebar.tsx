@@ -37,7 +37,9 @@ export function RightSidebar({ predictions }: RightSidebarProps) {
   const weekLabel =
     weekAcc && weekAcc.total > 0 && weekAcc.accuracy != null
       ? `${(weekAcc.accuracy * 100).toFixed(1)}% (${weekAcc.correct}/${weekAcc.total})`
-      : '—';
+      : weekAcc && weekAcc.total === 0
+        ? 'No finished games yet'
+        : '—';
 
   return (
     <div className="space-y-6">
